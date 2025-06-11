@@ -516,14 +516,6 @@ async def gemini_processor():
                             "speechConfig": {
                                 "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Leda"}}
                             }
-                            # "outputAudioConfig": {
-                            #     "audioEncoding": "LINEAR16",
-                            #     "synthesizeSpeechConfig": {
-                            #         "voice": {
-                            #             "name": "Leda"
-                            #         }
-                            #     }
-                            # }
                         },
                         "outputAudioTranscription": {},
                         "systemInstruction": {
@@ -607,6 +599,11 @@ async def gemini_processor():
                                 # 텍스트 트랜스크립션 처리 (outputAudioTranscription)
                                 if "outputTranscription" in server_content and server_content["outputTranscription"].get("text"):
                                     transcript_part = server_content["outputTranscription"]["text"]
+                                    
+                                    # turnComplete이 있거나 새로운 응답이 시작될 때 이전 텍스트 초기화
+                                    if server_content.get("turnComplete") or (transcript_part.strip() and len(accumulated_transcription_for_oled) > 200):
+                                        accumulated_transcription_for_oled = ""
+                                    
                                     accumulated_transcription_for_oled += transcript_part
                                     logging.info(f"Received Output Transcription: {transcript_part}")
                                     # 실시간 트랜스크립션 청크를 OLED에 바로 표시
@@ -683,7 +680,7 @@ async def gemini_processor():
                                                 tool_call_result = {"success": False, "message": "Missing text for OLED."}
                                         elif fc_name == "play_melody":
                                             notes_to_play = fc_args.get("notes", [])
-                                            result = play_melody_impl(notes_to_play)
+                                            tool_call_result = play_melody_impl(notes_to_play)
                                         else:
                                             logging.warning(f"Unknown function call name: {fc_name}")
                                             tool_call_result = {"success": False, "message": f"Unknown function: {fc_name}"}
@@ -840,38 +837,39 @@ def play_melody_impl(notes):
     Plays a sequence of notes on the buzzer.
     Each note in the 'notes' list should be a dictionary: {'frequency': hz, 'duration': ms}
     """
-    global oled_display, display_draw_obj, display_image_obj, loaded_font
     try:
-        logger.info(f"Playing melody: {notes}")
+        logging.info(f"Playing melody: {notes}")
+        
+        # Create PWM object once and reuse it
+        pwm_buzzer = GPIO.PWM(BUZZER_PIN, 100)  # Start with 100Hz, will change frequency for each note
+        pwm_buzzer.start(10)  # Start with 10% duty cycle (like the example)
+        
         for note in notes:
             frequency = note.get("frequency")
             duration_ms = note.get("duration")
             if frequency is None or duration_ms is None or frequency <= 0 or duration_ms <= 0:
-                logger.warning(f"Skipping invalid note: {note}")
+                logging.warning(f"Skipping invalid note: {note}")
                 continue
 
             # Min duration to prevent issues, min frequency for typical buzzers
-            if duration_ms < 10: duration_ms = 10
-            if frequency < 20: frequency = 20 # Avoid very low frequencies
+            if duration_ms < 10: 
+                duration_ms = 10
+            if frequency < 20: 
+                frequency = 20  # Avoid very low frequencies
 
             try:
-                pwm = GPIO.PWM(BUZZER_PIN, frequency)
-                pwm.start(50)  # Start PWM with 50% duty cycle
+                # Change frequency for this note (like the example code)
+                pwm_buzzer.ChangeFrequency(frequency)
                 time.sleep(duration_ms / 1000.0)
-                pwm.stop()
                 time.sleep(0.05)  # Short pause between notes
             except Exception as e:
-                logger.error(f"Error playing note {frequency}Hz for {duration_ms}ms: {e}")
-                # Attempt to stop PWM if it was started
-                if 'pwm' in locals() and pwm:
-                    try:
-                        pwm.stop()
-                    except:
-                        pass # Ignore errors during cleanup stop
-        logger.info("Melody playback finished.")
+                logging.error(f"Error playing note {frequency}Hz for {duration_ms}ms: {e}")
+        
+        pwm_buzzer.stop()  # Stop PWM after all notes
+        logging.info("Melody playback finished.")
         return {"status": "success", "message": "Melody played."}
     except Exception as e:
-        logger.error(f"Error in play_melody_impl: {e}")
+        logging.error(f"Error in play_melody_impl: {e}")
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":

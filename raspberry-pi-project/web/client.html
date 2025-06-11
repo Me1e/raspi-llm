@@ -114,6 +114,13 @@
           messageInput.disabled = false;
           sendTextButton.disabled = false;
           startRecordButton.disabled = false;
+
+          // AudioContext를 미리 초기화 (사용자 인터랙션이 있었으므로 가능)
+          if (!outputAudioContext || outputAudioContext.state === 'closed') {
+            outputAudioContext = new (window.AudioContext ||
+              window.webkitAudioContext)({ sampleRate: 24000 });
+            logMessage('Audio output context initialized.', 'system');
+          }
         };
 
         websocket.onmessage = function (event) {
@@ -123,7 +130,10 @@
             if (data.type === 'status') {
               logMessage(`Status: ${data.message}`, 'system');
             } else if (data.type === 'audio_data') {
-              logMessage('Received audio data chunk from RPi.', 'system');
+              // 로깅 빈도 줄이기 - 첫 번째 오디오 청크만 로깅
+              if (audioQueue.length === 0 && !isPlayingFromQueue) {
+                logMessage('Starting audio playback from Gemini.', 'system');
+              }
               playAudioChunk(data.payload); // Base64 인코딩된 오디오 데이터 재생
             } else {
               logMessage(`Received Unknown JSON: ${event.data}`, 'received');
@@ -372,7 +382,20 @@
         const source = outputAudioContext.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(outputAudioContext.destination);
-        source.onended = playNextInQueue; // 다음 청크 재생 또는 큐 비우기
+        source.onended = function () {
+          // 다음 청크가 있으면 즉시 재생, 없으면 짧은 지연 후 재시도
+          if (audioQueue.length > 0) {
+            playNextInQueue();
+          } else {
+            setTimeout(() => {
+              if (audioQueue.length > 0) {
+                playNextInQueue();
+              } else {
+                isPlayingFromQueue = false;
+              }
+            }, 10); // 10ms 후 재시도
+          }
+        };
         source.start();
       }
     </script>
