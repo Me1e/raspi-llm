@@ -114,7 +114,7 @@ def setup_oled():
             loaded_font = ImageFont.load_default()
         
         logging.info("OLED display initialized successfully.")
-        display_text_on_oled_impl("AI Assistant Ready!", max_lines=1) # 시작 메시지
+        display_text_on_oled_impl("AI Ready!", max_lines=1) # 시작 메시지
         return True
     except ValueError as e:
         logging.error(f"OLED I2C setup error (ValueError): {e}. Is I2C enabled and address 0x3C correct?")
@@ -218,44 +218,30 @@ def rotate_servo_impl(degrees: int, direction: str = None):
 def get_distance_from_obstacle_impl():
     """초음파 센서를 사용하여 거리를 측정하고 cm 단위로 반환합니다."""
     try:
-        GPIO.output(TRIG_PIN, True)   # Trig 핀에 10us 동안 HIGH 신호 출력
-        time.sleep(0.00001)          # 10 마이크로초
+        # Ensure Trig is low for a short period before sending a pulse
         GPIO.output(TRIG_PIN, False)
+        time.sleep(0.01) # Settle time before measurement
 
-        pulse_start_time = time.time()
-        pulse_end_time = time.time()
-
-        # Echo 핀이 HIGH로 변경될 때까지 시작 시간 업데이트 (타임아웃 추가 권장)
-        timeout_start = time.time()
+        GPIO.output(TRIG_PIN, True); time.sleep(0.00001); GPIO.output(TRIG_PIN, False)
+        start_t, end_t = time.time(), time.time()
+        timeout_s = time.time()
         while GPIO.input(ECHO_PIN) == 0:
-            pulse_start_time = time.time()
-            if pulse_start_time - timeout_start > 1: # 1초 타임아웃
-                logging.warning("Ultrasonic sensor timeout (echo never went high).")
-                return {"success": False, "message": "Ultrasonic sensor timeout (echo never went high).", "distance_cm": -1}
-
-        # Echo 핀이 LOW로 변경될 때까지 종료 시간 업데이트 (타임아웃 추가 권장)
-        timeout_echo = time.time()
+            start_t = time.time()
+            if start_t - timeout_s > 0.1: # Reduced timeout for faster failure detection
+                logging.warning("Ultrasonic timeout (echo HIGH not detected).")
+                return {"success": False, "message": "Echo timeout HIGH", "distance_cm": -1}
+        timeout_e = time.time()
         while GPIO.input(ECHO_PIN) == 1:
-            pulse_end_time = time.time()
-            if pulse_end_time - timeout_echo > 1: # 1초 타임아웃
-                logging.warning("Ultrasonic sensor timeout (echo never went low).")
-                return {"success": False, "message": "Ultrasonic sensor timeout (echo never went low).", "distance_cm": -1}
-            
-        pulse_duration = pulse_end_time - pulse_start_time
-        distance = pulse_duration * 34300 / 2  # 음속: 34300 cm/s
-        distance = round(distance, 2)
-
-        if distance > 400 or distance < 2: # 센서 측정 범위 초과/미달 시
-            logging.info(f"Distance out of range: {distance} cm. Reporting as 'out of range'.")
-            return {"success": True, "message": f"Measured distance: {distance} cm (possibly out of effective range).", "distance_cm": distance, "status": "out_of_range"}
-        else:
-            logging.info(f"Measured distance: {distance} cm.")
-            return {"success": True, "message": f"Distance to obstacle is {distance} cm.", "distance_cm": distance, "unit": "cm"}
-
-    except Exception as e:
-        error_msg = f"Error measuring distance: {e}"
-        logging.error(error_msg)
-        return {"success": False, "message": error_msg, "distance_cm": -1}
+            end_t = time.time()
+            if end_t - timeout_e > 0.1: # Reduced timeout
+                logging.warning("Ultrasonic timeout (echo LOW not detected).")
+                return {"success": False, "message": "Echo timeout LOW", "distance_cm": -1}
+        dist = round((end_t - start_t) * 34300 / 2, 2)
+        logging.info(f"Distance: {dist} cm.")
+        status = "in_range"
+        if dist > 400 or dist < 2: status = "out_of_range"
+        return {"success": True, "message": f"Obstacle at {dist} cm.", "distance_cm": dist, "unit": "cm", "status": status}
+    except Exception as e: return {"success": False, "message": f"Dist err: {e}", "distance_cm": -1}
 
 def display_text_on_oled_impl(text: str, max_lines: int = 4, line_height: int = 10):
     global display_draw_obj, display_image_obj, oled_display, loaded_font
@@ -280,14 +266,14 @@ def display_text_on_oled_impl(text: str, max_lines: int = 4, line_height: int = 
             if line_width <= oled_display.width:
                 current_line += word + (" " if i < len(words)-1 else "")
             else:
-                lines.append(current_line)
+                lines.append(current_line.rsplit(' ',1)[0] if ' ' in current_line else current_line) # word wrap
                 current_line = word + (" " if i < len(words)-1 else "")
         lines.append(current_line) # 마지막 줄 추가
 
         y_text = 0
         for i, line_content in enumerate(lines):
             if i >= max_lines: break # 최대 줄 수 제한
-            display_draw_obj.text((0, y_text), line_content, font=loaded_font, fill=255)
+            display_draw_obj.text((0, y_text), line_content.strip(), font=loaded_font, fill=255)
             y_text += line_height # 다음 줄 위치 (폰트 높이에 맞게 조절)
             if y_text >= oled_display.height: break
 
@@ -555,12 +541,12 @@ async def gemini_processor():
                                             audio_base64 = part["inlineData"]["data"]
                                             logging.info(f"Received AUDIO data from Gemini (approx {len(audio_base64)*3/4} bytes of PCM).")
                                             message_for_web = {"type": "audio_data", "payload": audio_base64}
-                                            # 오디오와 함께 트랜스크립션이 올 수도 있으므로, 계속 다른 part도 확인
+                                    # 오디오와 함께 트랜스크립션이 올 수도 있으므로, 계속 다른 part도 확인
                                 
                                 # 텍스트 트랜스크립션 처리 (outputAudioTranscription)
                                 if "outputTranscription" in server_content and server_content["outputTranscription"].get("text"):
                                     transcript = server_content["outputTranscription"]["text"]
-                                    accumulated_transcription += transcript + " "
+                                    accumulated_transcription += transcript
                                     last_transcription_time = time.time()
                                     logging.info(f"Received Output Transcription: {transcript}")
                                     # 오디오 데이터와 트랜스크립션을 별도 메시지로 보낼지, 합칠지 결정 필요.
@@ -679,26 +665,9 @@ async def gemini_processor():
                         except Exception as e_recv:
                             logging.error(f"Error in receive_from_gemini: {e_recv}")
                 
-                # 간단한 Transcription flush 로직 (주기적으로 또는 턴 종료 시 OLED 업데이트)
-                async def transcription_oled_flusher():
-                    global accumulated_transcription, last_transcription_time
-                    while True:
-                        await asyncio.sleep(TRANSCRIPTION_FLUSH_INTERVAL / 2.0)
-                        if gemini_websocket_connection and gemini_websocket_connection.state != State.OPEN: break # Gemini 연결 끊기면 종료
-                        if accumulated_transcription.strip() and (time.time() - last_transcription_time > TRANSCRIPTION_FLUSH_INTERVAL):
-                            logging.info(f"Flushing accumulated transcription to OLED: {accumulated_transcription.strip()}")
-                            # Gemini에게 display_on_oled 함수 호출을 요청하거나 직접 호출.
-                            # 여기서는 Gemini가 알아서 호출하도록 유도 (system prompt에 명시)
-                            # 또는 명시적으로 함수 호출을 Gemini에게 보낼 수도 있음 (clientContent 메시지 사용)
-                            # 가장 간단한 방법은 Gemini가 함수호출로 응답하도록 하는 것.
-                            # display_text_on_oled_impl(accumulated_transcription.strip()) # 직접 호출 예시
-                            # accumulated_transcription = "" # 직접 호출 시 초기화
-                            pass # 현재는 Gemini의 함수 호출에 의존
-
                 await asyncio.gather(
                     forward_text_to_gemini(),
-                    receive_from_gemini(),
-                    transcription_oled_flusher() # 트랜스크립션 OLED 업데이트 태스크 추가
+                    receive_from_gemini()
                 )
 
         except (websockets.exceptions.WebSocketException, ConnectionRefusedError, OSError) as e:
