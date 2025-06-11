@@ -108,9 +108,9 @@ def setup_oled():
         display_draw_obj = ImageDraw.Draw(display_image_obj)
         
         try:
-            loaded_font = ImageFont.truetype("PixelOperator.ttf", 16) # 폰트 크기 조절 가능
+            loaded_font = ImageFont.truetype("NanumGothicCoding.ttf", 16) # 폰트 크기 조절 가능
         except IOError:
-            logging.warning("PixelOperator.ttf not found. Using default font.")
+            logging.warning("NanumGothicCoding.ttf not found. Using default font.")
             loaded_font = ImageFont.load_default()
         
         logging.info("OLED display initialized successfully.")
@@ -251,37 +251,58 @@ def display_text_on_oled_impl(text: str, max_lines: int = 4, line_height: int = 
     try:
         display_draw_obj.rectangle((0, 0, oled_display.width, oled_display.height), outline=0, fill=0) # Clear
         
+        if not text.strip(): # 빈 텍스트면 지워진 화면으로 표시하고 종료
+            oled_display.image(display_image_obj)
+            oled_display.show()
+            logging.info("OLED cleared.")
+            return {"success": True, "message": "OLED cleared."}
+
         words = text.split(' ')
-        lines = []
-        current_line = ""
+        calculated_lines = [] 
+        current_line_for_calc = ""
+
         for i, word in enumerate(words):
-            # 폰트 BoundingBox를 사용하여 더 정확한 너비 측정 (PIL 9.2.0+ 필요)
-            # textbbox는 (left, top, right, bottom) 반환
+            test_word = word + (" " if i < len(words) -1 else "") # 다음 단어와의 공백 고려
+            # 현재 줄에 단어를 추가했을 때 너비를 계산
+            potential_line = current_line_for_calc + (" " if current_line_for_calc and word else "") + word
+
             if hasattr(display_draw_obj, 'textbbox'):
-                bbox = display_draw_obj.textbbox((0,0), current_line + word + (" " if i < len(words)-1 else ""), font=loaded_font)
+                bbox = display_draw_obj.textbbox((0,0), potential_line, font=loaded_font)
                 line_width = bbox[2] - bbox[0]
-            else: # 구버전 PIL 호환 (덜 정확함)
-                line_width = display_draw_obj.textlength(current_line + word + (" " if i < len(words)-1 else ""), font=loaded_font)
+            else: 
+                line_width = display_draw_obj.textlength(potential_line, font=loaded_font)
 
             if line_width <= oled_display.width:
-                current_line += word + (" " if i < len(words)-1 else "")
+                current_line_for_calc = potential_line
             else:
-                lines.append(current_line.rsplit(' ',1)[0] if ' ' in current_line else current_line) # word wrap
-                current_line = word + (" " if i < len(words)-1 else "")
-        lines.append(current_line) # 마지막 줄 추가
+                if current_line_for_calc: # 이전까지 완성된 줄 추가
+                    calculated_lines.append(current_line_for_calc)
+                current_line_for_calc = word # 새 줄은 현재 단어로 시작 (공백 없이)
+        
+        if current_line_for_calc: # 마지막 줄 추가
+            calculated_lines.append(current_line_for_calc)
+
+        # 화면에 표시할 최종 줄 선택 (마지막 max_lines 만큼)
+        lines_to_display = calculated_lines[-max_lines:]
 
         y_text = 0
-        for i, line_content in enumerate(lines):
-            if i >= max_lines: break # 최대 줄 수 제한
+        for line_content in lines_to_display:
             display_draw_obj.text((0, y_text), line_content.strip(), font=loaded_font, fill=255)
-            y_text += line_height # 다음 줄 위치 (폰트 높이에 맞게 조절)
-            if y_text >= oled_display.height: break
-
+            y_text += line_height 
+            if y_text >= oled_display.height: 
+                break
+        
         oled_display.image(display_image_obj)
         oled_display.show()
-        logging.info(f"Displayed on OLED: '{text[:30]}...'")
-        return {"success": True, "message": "Text displayed on OLED."}
-    except Exception as e:
+        # 로그는 전체 텍스트의 마지막 부분 또는 처음 부분을 간략히 표시
+        log_text = text.strip()
+        if len(log_text) > 50:
+            logging.info(f"OLED display updated (last 50 chars): '{log_text[-50:].replace("\n", " ")}'")
+        elif log_text:
+            logging.info(f"OLED display updated: '{log_text.replace("\n", " ")}'")
+        # 빈 문자열일 때는 위에서 이미 로깅됨
+        return {"success": True, "message": "Text updated on OLED."}
+    except Exception as e: 
         error_msg = f"Error displaying on OLED: {e}"
         logging.error(error_msg)
         return {"success": False, "message": error_msg}
