@@ -21,7 +21,7 @@ GREEN_LED_PIN = 17
 YELLOW_LED_PIN = 27
 RED_LED_PIN = 22
 WHITE_LED_PIN = 10 # 흰색 LED 핀 추가
-# SERVO_PIN = 18 # 추후 서보모터용
+SERVO_PIN = 18 # 서보모터 GPIO 핀
 # TRIG_PIN = 23 # 추후 초음파센서용
 # ECHO_PIN = 24 # 추후 초음파센서용
 
@@ -32,18 +32,33 @@ led_pins = {
     "white": WHITE_LED_PIN # 흰색 LED 딕셔너리에 추가
 }
 
+servo_motor = None # PWM 객체 저장용
+current_servo_angle = 90 # 서보 모터의 현재 각도 추정 (0-180, 초기값은 중앙으로)
+
 def setup_gpio():
+    global servo_motor, current_servo_angle
     GPIO.setmode(GPIO.BCM) # BCM 핀 번호 사용
     GPIO.setwarnings(False) # 경고 메시지 비활성화
     for pin in led_pins.values():
         GPIO.setup(pin, GPIO.OUT)
         GPIO.output(pin, GPIO.LOW) # 초기 상태는 꺼짐
-    # GPIO.setup(SERVO_PIN, GPIO.OUT) # 추후 서보모터용
-    # GPIO.setup(TRIG_PIN, GPIO.OUT) # 추후 초음파센서용
-    # GPIO.setup(ECHO_PIN, GPIO.IN)  # 추후 초음파센서용
-    logging.info("GPIO setup complete for LEDs.")
+    
+    GPIO.setup(SERVO_PIN, GPIO.OUT)
+    servo_motor = GPIO.PWM(SERVO_PIN, 50)  # 50Hz (20ms 주기)
+    servo_motor.start(0) # 초기 듀티 사이클 0 (펄스 없음)
+    # 초기 각도를 90도(중앙)로 설정 시도
+    # duty_cycle_for_90_deg = (90.0 / 18.0) + 2.5 
+    # servo_motor.ChangeDutyCycle(duty_cycle_for_90_deg)
+    # time.sleep(0.5) # 서보가 움직일 시간
+    # servo_motor.ChangeDutyCycle(0) # 펄스 중지 (지터 방지)
+    current_servo_angle = 90 # 초기 각도 설정
+    set_servo_angle_absolute(current_servo_angle) # 실제 모터 이동
+
+    logging.info("GPIO setup complete for LEDs and Servo.")
 
 def cleanup_gpio():
+    if servo_motor:
+        servo_motor.stop()
     GPIO.cleanup()
     logging.info("GPIO cleanup done.")
 
@@ -86,6 +101,53 @@ def set_led_state_impl(color: str, state: bool):
         error_msg = f"Error controlling {color} LED: {e}"
         logging.error(error_msg)
         return {"success": False, "message": error_msg}
+
+def angle_to_duty_cycle(angle):
+    """0-180도 각도를 SG90 서보의 듀티 사이클(2.5 ~ 12.5)로 변환합니다."""
+    if not (0 <= angle <= 180):
+        # logging.warning(f"Servo angle {angle} out of range (0-180). Clamping.")
+        angle = max(0, min(180, angle))
+    return (angle / 18.0) + 2.5
+
+def set_servo_angle_absolute(target_angle: int):
+    global current_servo_angle, servo_motor
+    target_angle = int(max(0, min(180, target_angle))) # 0-180도 범위 보장
+    
+    if not servo_motor:
+        logging.error("Servo motor not initialized.")
+        return {"success": False, "message": "Servo motor not initialized."}
+    try:
+        duty_cycle = angle_to_duty_cycle(target_angle)
+        servo_motor.ChangeDutyCycle(duty_cycle)
+        logging.info(f"Servo moving to {target_angle} degrees (duty cycle: {duty_cycle:.2f})")
+        time.sleep(0.3 + abs(target_angle - current_servo_angle) * 0.003) # 각도 변화량에 따라 충분한 시간 부여
+        servo_motor.ChangeDutyCycle(0) # 펄스 중지 (지터 방지 및 모터 보호)
+        current_servo_angle = target_angle
+        msg = f"Servo motor set to {target_angle} degrees."
+        logging.info(msg)
+        return {"success": True, "message": msg}
+    except Exception as e:
+        error_msg = f"Error setting servo angle: {e}"
+        logging.error(error_msg)
+        return {"success": False, "message": error_msg}
+
+def rotate_servo_impl(degrees: int, direction: str = None):
+    """서보 모터를 지정된 각도만큼 상대적으로 회전시키거나 절대 각도로 설정합니다."""
+    global current_servo_angle
+    degrees = int(degrees)
+
+    if direction:
+        direction = direction.lower()
+        if direction == "clockwise":
+            target_angle = current_servo_angle + degrees
+        elif direction == "counter_clockwise" or direction == "anticlockwise":
+            target_angle = current_servo_angle - degrees
+        else:
+            return {"success": False, "message": f"Unknown direction: {direction}. Use 'clockwise' or 'counter_clockwise'."}
+    else: # direction이 없으면 degrees를 절대 각도로 간주
+        target_angle = degrees
+        
+    return set_servo_angle_absolute(target_angle)
 
 async def setup_camera():
     global picam2
@@ -191,7 +253,26 @@ led_tool_schema = {
         "required": ["color", "state"]
     }
 }
-# (다른 하드웨어 스키마들도 여기에 추가 예정)
+
+servo_tool_schema = {
+    "name": "rotate_servo",
+    "description": "Rotates the servo motor by a specified number of degrees relative to current position or sets it to an absolute angle. Default is absolute if direction is not provided.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "degrees": {
+                "type": "INTEGER",
+                "description": "The angle in degrees (0-180 for absolute, or relative change)."
+            },
+            "direction": {
+                "type": "STRING",
+                "description": "Optional. Direction for relative rotation: 'clockwise' or 'counter_clockwise'. If omitted, 'degrees' is treated as an absolute angle.",
+                "nullable": True # 선택적 파라미터 명시 (OpenAPI v3 style)
+            }
+        },
+        "required": ["degrees"]
+    }
+}
 
 async def gemini_processor():
     global gemini_websocket_connection
@@ -210,7 +291,7 @@ async def gemini_processor():
 
                 # Task 5.3: Function Calling 설정 추가
                 tools_config = [
-                    {"functionDeclarations": [led_tool_schema]} # LED 제어 도구 추가
+                    {"functionDeclarations": [led_tool_schema, servo_tool_schema]} # LED 제어 도구 추가
                     # 추후 다른 도구들 여기에 추가 (예: Servo, OLED, Ultrasonic)
                 ]
 
@@ -222,7 +303,7 @@ async def gemini_processor():
                         },
                         "outputAudioTranscription": {}, # 최상위 setup 객체 내로 이동
                         "systemInstruction": {
-                            "parts": [{"text": "You are a friendly and helpful Raspberry Pi assistant. You can control LEDs of colors green, yellow, red, and white."}] # 흰색 LED 제어 가능 명시
+                            "parts": [{"text": "You are a friendly and helpful Raspberry Pi assistant. You can control LEDs of colors green, yellow, red, and white, and a servo motor."}] # 흰색 LED 제어 가능 명시
                         },
                         "tools": tools_config # 정의된 도구 설정 추가
                     }
@@ -352,7 +433,14 @@ async def gemini_processor():
                                                 tool_call_result = set_led_state_impl(color, state)
                                             else:
                                                 tool_call_result = {"success": False, "message": "Missing color or state argument for set_led_state."}
-                                        # (다른 함수 호출들 elif로 추가)
+                                        elif fc_name == "rotate_servo": # 서보 모터 함수 호출 처리
+                                            degrees = fc_args.get("degrees")
+                                            direction = fc_args.get("direction") # 선택적
+                                            if degrees is not None:
+                                                logging.info(f"Executing tool call: rotate_servo(degrees={degrees}, direction='{direction}')")
+                                                tool_call_result = rotate_servo_impl(degrees, direction)
+                                            else:
+                                                tool_call_result = {"success": False, "message": "Missing degrees argument for rotate_servo."}
                                         else:
                                             logging.warning(f"Unknown function call name: {fc_name}")
                                             tool_call_result = {"success": False, "message": f"Unknown function: {fc_name}"}

@@ -122,8 +122,8 @@ _This phase focuses on enabling Gemini to control connected hardware components 
 
 ### 5.1 Define Function Schemas for Hardware
 
-    - [ ] **LED Control:**
-        - `set_led_state(color: string, state: boolean)`: 특정 색상 LED(예: "green", "yellow", "red")를 켜거나(true) 끕니다(false).
+    - [X] **LED Control:**
+        - `set_led_state(color: string, state: boolean)`: 특정 색상 LED(예: "green", "yellow", "red", "white")를 켜거나(true) 끕니다(false).
     - [ ] **Servo Motor Control:**
         - `rotate_servo(degrees: int, direction: string | null)`: 서보 모터를 지정된 각도만큼 특정 방향("clockwise", "counter_clockwise")으로 상대 회전시키거나, 방향 없이 절대 각도로 설정합니다. (예: `degrees: 60, direction: "clockwise"` 또는 `degrees: 90, direction: null` (90도로 설정)).
         - *Consider a function like `set_servo_angle(angle: int)` for absolute positioning if more suitable.*
@@ -134,13 +134,13 @@ _This phase focuses on enabling Gemini to control connected hardware components 
 
 ### 5.2 Implement Hardware Control Functions in Python
 
-    - [ ] **GPIO Pin Setup:**
-        - Define GPIO pin numbers for Green, Yellow, Red LEDs.
+    - [X] **GPIO Pin Setup:** (LED 부분 완료)
+        - Define GPIO pin numbers for Green, Yellow, Red, White LEDs.
         - Define GPIO pin number for Servo Motor PWM.
         - Define GPIO pin numbers for Ultrasonic Sensor (Trig, Echo).
         - Define I2C pins/address for OLED (referencing `board.I2C()` and `addr=0x3C`).
         - Initialize `RPi.GPIO` in BCM mode and set up pins as OUT or IN.
-    - [ ] **LED Control Functions:**
+    - [X] **LED Control Functions:**
         - Implement Python function `set_led_state_impl(color_name, on_off)` that maps color name to GPIO pin and controls `GPIO.output()`.
     - [ ] **Servo Motor Control Functions:**
         - Implement Python function `rotate_servo_impl(degrees, direction)`:
@@ -159,33 +159,33 @@ _This phase focuses on enabling Gemini to control connected hardware components 
         - Implement Python function `get_distance_from_obstacle_impl()` based on the reference code:
             - Trigger pulse, measure echo duration.
             - Calculate distance and return it.
-    - [ ] **Ensure proper `GPIO.cleanup()` on program exit.**
+    - [X] **Ensure proper `GPIO.cleanup()` on program exit.** (LED 관련 부분 확인)
 
 ### 5.3 Configure Function Calling in Gemini Session Setup
 
-    - [ ] Create `Tool` objects containing `functionDeclarations` for all defined schemas (LEDs, Servo, OLED, Ultrasonic) from 5.1.
-    - [ ] In `main.py`'s `gemini_processor`, add these `Tool` objects to the `tools` array within the `setup` message sent to Gemini.
+    - [X] Create `Tool` objects containing `functionDeclarations` for LED control schema from 5.1.
+    - [X] In `main.py`'s `gemini_processor`, add these `Tool` objects to the `tools` array within the `setup` message sent to Gemini.
     - *Reference: `docs/function-call-api.md`, `docs/gemini-live-api.md` (Function Calling example), `gemini-web-dev/src/components/altair/Altair.tsx` for tool declaration structure.*
 
 ### 5.4 Handle Tool Calls from Gemini
 
-    - [ ] In `main.py`'s `receive_from_gemini` (or a dedicated tool call handler):
+    - [X] In `main.py`'s `receive_from_gemini` (or a dedicated tool call handler):
         - Listen for `BidiGenerateContentToolCall` messages (`message_data['toolCall']`).
         - Parse the `functionCalls` array.
-        - For each `functionCall`:
-            - Identify the function `name` (e.g., "set_led_state", "rotate_servo").
-            - Extract arguments from `args`.
-            - Asynchronously execute the corresponding Python implementation function (e.g., `set_led_state_impl`).
+        - For each `functionCall` for `set_led_state`:
+            - Identify the function `name` ("set_led_state").
+            - Extract arguments from `args` (`color`, `state`).
+            - Asynchronously execute the Python implementation function (`set_led_state_impl`).
     - *Reference: `docs/google-websocket-api.md` (BidiGenerateContentToolCall, FunctionCall structure).*
 
 ### 5.5 Send Tool Responses to Gemini
 
-    - [ ] After a Python hardware/sensor function (e.g., `set_led_state_impl`) executes:
+    - [X] After `set_led_state_impl` executes:
         - Prepare a `FunctionResponse` object.
             - Use the `id` from the original `FunctionCall`.
-            - Set `name` to the original function name.
-            - Populate `response.output` with a JSON object indicating success/failure and any relevant data (e.g., `{"success": True, "message": "Green LED turned on"}` or `{"distance_cm": 25.5}`).
-    - [ ] Send an array of these `FunctionResponse` objects back to Gemini using the `BidiGenerateContentToolResponse` message.
+            - Set `name` to "set_led_state".
+            - Populate `response.output` with a JSON object indicating success/failure and any relevant data (e.g., `{"success": True, "message": "Green LED turned on"}`).
+    - [X] Send an array of these `FunctionResponse` objects back to Gemini using the `BidiGenerateContentToolResponse` message.
     - *Reference: `docs/google-websocket-api.md` (BidiGenerateContentToolResponse, FunctionResponse structure). `gemini-web-dev/src/components/altair/Altair.tsx` has an example of sending tool responses.*
 
 ## Phase 6: Sensor Integration and OLED Display (Refined based on new requirements)
