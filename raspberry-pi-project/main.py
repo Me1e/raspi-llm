@@ -31,11 +31,12 @@ WHITE_LED_PIN = 10 # 흰색 LED 핀 추가
 SERVO_PIN = 18 # 서보모터 GPIO 핀
 TRIG_PIN = 23 # 초음파 센서 Trig 핀
 ECHO_PIN = 24 # 초음파 센서 Echo 핀
+BUZZER_PIN = 9 # Example GPIO pin for the buzzer
 
 # OLED 설정
 OLED_WIDTH = 128
 OLED_HEIGHT = 64
-OLED_RESET_PIN_BCM = 4 # GPIO4, 물리적 핀 7. 실제 연결된 핀으로 수정하거나, None으로 설정 가능
+OLED_RESET_PIN_BCM = 4 # GPIO4, 물리적 핀 7. 실제 연결된 핀으로 수정하거나 None으로 설정 가능
 
 led_pins = {
     "green": GREEN_LED_PIN,
@@ -73,6 +74,9 @@ def setup_gpio():
     GPIO.setup(TRIG_PIN, GPIO.OUT)
     GPIO.setup(ECHO_PIN, GPIO.IN)
     GPIO.output(TRIG_PIN, False) # 초기 Trig 핀은 LOW 상태
+
+    GPIO.setup(BUZZER_PIN, GPIO.OUT)
+    GPIO.output(BUZZER_PIN, GPIO.LOW) # Ensure buzzer is off initially
 
     logging.info("GPIO setup complete for LEDs, Servo, and Ultrasonic sensor.")
     logging.info("Waiting for ultrasonic sensor to settle...")
@@ -126,7 +130,16 @@ def cleanup_gpio():
     if servo_motor:
         servo_motor.stop()
     GPIO.cleanup()
-    logging.info("GPIO cleanup done.")
+    # Ensure buzzer PWM is stopped and pin is cleaned up if it was used
+    # This might be tricky if PWM object is local to play_melody_impl
+    # For simplicity, just ensure the pin is output low.
+    # Proper PWM cleanup might need a global PWM object or more careful handling.
+    try:
+        GPIO.output(BUZZER_PIN, GPIO.LOW) # Ensure buzzer is off
+        logging.info("Buzzer pin set to LOW.")
+    except RuntimeError as e:
+        logging.warning(f"Could not set buzzer pin to LOW during cleanup (possibly already cleaned up or not set up): {e}")
+    logging.info("GPIO cleanup finished.")
 
 # --- Gemini API 설정 ---
 GEMINI_API_KEY = "YOUR_API_KEY_HERE" # 실제 API 키로 교체!
@@ -451,6 +464,29 @@ oled_tool_schema = {
     }
 }
 
+buzzer_tool_schema = {
+    "name": "play_melody",
+    "description": "Plays a sequence of musical notes on the buzzer. Each note has a frequency and duration.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "notes": {
+                "type": "ARRAY",
+                "description": "A list of notes to play. Each note is an object with 'frequency' (in Hz) and 'duration' (in milliseconds).",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "frequency": {"type": "INTEGER", "description": "Frequency of the note in Hz (e.g., 262 for Middle C, 440 for A4)."},
+                        "duration": {"type": "INTEGER", "description": "Duration of the note in milliseconds."}
+                    },
+                    "required": ["frequency", "duration"]
+                }
+            }
+        },
+        "required": ["notes"]
+    }
+}
+
 async def gemini_processor():
     global gemini_websocket_connection, accumulated_transcription_for_oled
     if GEMINI_API_KEY == "YOUR_API_KEY_HERE":
@@ -468,29 +504,32 @@ async def gemini_processor():
 
                 # Task 5.3: Function Calling 설정 추가
                 tools_config = [
-                    {"functionDeclarations": [led_tool_schema, servo_tool_schema, ultrasonic_tool_schema, oled_tool_schema]},
-                    {"googleSearch": {}} # Google Search 도구 추가
+                    {"functionDeclarations": [led_tool_schema, servo_tool_schema, ultrasonic_tool_schema, oled_tool_schema, buzzer_tool_schema]},
+                    {"googleSearch": {}}
                 ]
 
                 setup_message = {
                     "setup": {
                         "model": f"models/{GEMINI_MODEL_NAME}",
                         "generationConfig": {
-                            "responseModalities": ["AUDIO"], # 오디오 응답 요청으로 변경
-                        },
-                        "outputAudioConfig": { # "Leda" 음성 설정을 위해 추가
-                            "synthesizeSpeechConfig": {
-                                "voice": {
-                                    "name": "Leda"
-                                    # API 문서에 따라 필요하다면 "gender" 등의 추가 파라미터 고려 가능
-                                }
+                            "responseModalities": ["AUDIO"],
+                            "speechConfig": {
+                                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Leda"}}
                             }
+                            # "outputAudioConfig": {
+                            #     "audioEncoding": "LINEAR16",
+                            #     "synthesizeSpeechConfig": {
+                            #         "voice": {
+                            #             "name": "Leda"
+                            #         }
+                            #     }
+                            # }
                         },
-                        "outputAudioTranscription": {}, # 최상위 setup 객체 내로 이동
+                        "outputAudioTranscription": {},
                         "systemInstruction": {
                             "parts": [{"text": "You are a friendly and helpful Raspberry Pi assistant. Answer as succinctly and quickly as possible by only answering what is needed."}]
                         },
-                        "tools": tools_config # 정의된 도구 설정 추가 (이제 Google Search 포함)
+                        "tools": tools_config
                     }
                 }
                 await gemini_ws.send(json.dumps(setup_message))
@@ -642,6 +681,9 @@ async def gemini_processor():
                                                 tool_call_result = display_text_on_oled_impl(text_to_display, line_height=14)
                                             else:
                                                 tool_call_result = {"success": False, "message": "Missing text for OLED."}
+                                        elif fc_name == "play_melody":
+                                            notes_to_play = fc_args.get("notes", [])
+                                            result = play_melody_impl(notes_to_play)
                                         else:
                                             logging.warning(f"Unknown function call name: {fc_name}")
                                             tool_call_result = {"success": False, "message": f"Unknown function: {fc_name}"}
@@ -792,6 +834,45 @@ async def start_main_server():
 
     async with websockets.serve(rpi_websocket_handler, server_host, server_port):
         await asyncio.Future()  
+
+def play_melody_impl(notes):
+    """
+    Plays a sequence of notes on the buzzer.
+    Each note in the 'notes' list should be a dictionary: {'frequency': hz, 'duration': ms}
+    """
+    global oled_display, display_draw_obj, display_image_obj, loaded_font
+    try:
+        logger.info(f"Playing melody: {notes}")
+        for note in notes:
+            frequency = note.get("frequency")
+            duration_ms = note.get("duration")
+            if frequency is None or duration_ms is None or frequency <= 0 or duration_ms <= 0:
+                logger.warning(f"Skipping invalid note: {note}")
+                continue
+
+            # Min duration to prevent issues, min frequency for typical buzzers
+            if duration_ms < 10: duration_ms = 10
+            if frequency < 20: frequency = 20 # Avoid very low frequencies
+
+            try:
+                pwm = GPIO.PWM(BUZZER_PIN, frequency)
+                pwm.start(50)  # Start PWM with 50% duty cycle
+                time.sleep(duration_ms / 1000.0)
+                pwm.stop()
+                time.sleep(0.05)  # Short pause between notes
+            except Exception as e:
+                logger.error(f"Error playing note {frequency}Hz for {duration_ms}ms: {e}")
+                # Attempt to stop PWM if it was started
+                if 'pwm' in locals() and pwm:
+                    try:
+                        pwm.stop()
+                    except:
+                        pass # Ignore errors during cleanup stop
+        logger.info("Melody playback finished.")
+        return {"status": "success", "message": "Melody played."}
+    except Exception as e:
+        logger.error(f"Error in play_melody_impl: {e}")
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     try:

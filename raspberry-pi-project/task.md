@@ -48,12 +48,11 @@ This document outlines the tasks required to build the Raspberry Pi based Real-t
     - [X] In `main.py`, implement Python code to connect to the Gemini Live API WebSocket endpoint: `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`.
     - [X] Handle the initial `BidiGenerateContentSetup` message:
         - Specify the model (e.g., "gemini-2.0-flash-live-001" or a newer compatible experimental model).
-        - Configure `responseModalities` (initially `["TEXT"]`, then `["AUDIO"]`).
-        - **Configure `outputAudioConfig` to set the voice (e.g., name: "Leda").**
+        - Configure `generationConfig` with `responseModalities: ["AUDIO"]` and `outputAudioConfig` (including `audioEncoding: "LINEAR16"` and `synthesizeSpeechConfig` for "Leda" voice).
         - Set up `systemInstruction` as per `plan.md` ("You are a helpful assistant...").
         - Prepare for `tools` configuration (Function Calling, Google Search).
     - [X] Handle `BidiGenerateContentSetupComplete` response from Gemini to confirm setup.
-    - *Reference: `docs/gemini-live-api.md` (Establishing a Connection), `docs/google-websocket-api.md` (BidiGenerateContentSetup, BidiGenerateContentSetupComplete, SynthesizeSpeechConfig).*
+    - *Reference: `docs/gemini-live-api.md` (Establishing a Connection), `docs/google-websocket-api.md` (BidiGenerateContentSetup, BidiGenerateContentSetupComplete, GenerationConfig, OutputAudioConfig, SynthesizeSpeechConfig).*
 
 ### 2.3 Basic Text Interaction with Gemini
 
@@ -91,7 +90,7 @@ This document outlines the tasks required to build the Raspberry Pi based Real-t
 
     - [X] Receive audio chunks (JSON wrapped with `type: "audio_data"`) from the RPi WebSocket server.
     - [X] Decode base64 audio data from the payload.
-    - [X] Convert 16-bit PCM (24kHz from Gemini by default, may need to check `outputAudioConfig.sampleRateHertz`) to Float32Array and use Web Audio API to play back the received audio chunks in the browser.
+    - [X] Convert 16-bit PCM (check `outputAudioConfig.sampleRateHertz` from Gemini, typically 24kHz) to Float32Array and use Web Audio API to play back the received audio chunks in the browser.
     - *Reference: Web Audio API documentation. For playback concepts, see `gemini-web-dev/src/lib/audio-streamer.ts`.*
 
 ### 3.5 Audio Transcription (Optional, for Debugging/Display)
@@ -124,68 +123,53 @@ _This phase focuses on enabling Gemini to control connected hardware components 
 ### 5.1 Define Function Schemas for Hardware
 
     - [X] **LED Control:**
-        - `set_led_state(color: string, state: boolean)`: 특정 색상 LED(예: "green", "yellow", "red", "white")를 켜거나(true) 끕니다(false).
+        - `set_led_state(color: string, state: boolean)`
     - [X] **Servo Motor Control:**
-        - `rotate_servo(degrees: int, direction: string | null)`: 서보 모터를 지정된 각도만큼 특정 방향("clockwise", "counter_clockwise")으로 상대 회전시키거나, 방향 없이 절대 각도로 설정합니다. (예: `degrees: 60, direction: "clockwise"` 또는 `degrees: 90, direction: null` (90도로 설정)).
+        - `rotate_servo(degrees: int, direction: string | null)`
     - [X] **OLED Display Control:** (Implemented in main.py)
-        - `display_on_oled(text: string)`: OLED에 주어진 텍스트를 표시합니다. `main.py` implementation handles auto line wrapping.
+        - `display_on_oled(text: string)`
     - [X] **Ultrasonic Sensor Reading:**
-        - `get_distance_from_obstacle()`: 초음파 센서를 사용하여 전방 장애물까지의 거리를 cm 단위로 반환합니다. (Gemini가 이 함수를 호출하여 정보를 얻음)
+        - `get_distance_from_obstacle()`
+    - [ ] **Buzzer Melody Playback:**
+        - `play_melody(notes: list_of_objects)`: Plays a sequence of musical notes. Each note object should contain `frequency` (Hz) and `duration` (ms).
 
 ### 5.2 Implement Hardware Control Functions in Python
 
-    - [X] **GPIO Pin Setup:** (LED, Servo, Ultrasonic 부분 완료, OLED I2C setup in `main.py`)
-        - Define GPIO pin numbers for Green, Yellow, Red, White LEDs.
-        - Define GPIO pin number for Servo Motor PWM.
-        - Define GPIO pin numbers for Ultrasonic Sensor (Trig, Echo).
-        - Define I2C pins/address for OLED (referencing `board.I2C()` and `addr=0x3C`).
-        - Initialize `RPi.GPIO` in BCM mode and set up pins as OUT or IN.
-    - [X] **LED Control Functions:**
-        - Implement Python function `set_led_state_impl(color_name, on_off)` that maps color name to GPIO pin and controls `GPIO.output()`.
-    - [X] **Servo Motor Control Functions:**
-        - Implement Python function `rotate_servo_impl(degrees, direction)`:
-            - Convert `degrees` and `direction` to appropriate PWM duty cycle changes.
-            - Handle relative vs. absolute rotation logic.
-            - Initialize `GPIO.PWM(SERVO_PIN, 50)` and use `servo.ChangeDutyCycle()`.
-    - [X] **OLED Display Functions:** (Implemented in `main.py`)
-        - Implement Python class/functions for OLED control based on the reference:
-            - Initialization (`adafruit_ssd1306.SSD1306_I2C`).
-            - Clearing display (`oled.fill(0); oled.show()`).
-            - Drawing text with PIL (`Image`, `ImageDraw`, `ImageFont`).
-            - Handling multi-line text (splitting, positioning).
-        - Implement `display_on_oled_impl(text_to_display)` to use these utilities.
-    - [X] **Ultrasonic Sensor Functions:**
-        - Implement Python function `get_distance_from_obstacle_impl()` based on the reference code:
-            - Trigger pulse, measure echo duration.
-            - Calculate distance and return it.
-    - [X] **Ensure proper `GPIO.cleanup()` on program exit.** (LED, Servo, Ultrasonic 관련 부분 확인)
+    - [X] **GPIO Pin Setup:** (LED, Servo, Ultrasonic, OLED I2C setup in `main.py`)
+        - Define and initialize GPIO pins for all connected hardware including Buzzer (e.g., `BUZZER_PIN`).
+    - [X] **LED Control Functions:** (`set_led_state_impl`)
+    - [X] **Servo Motor Control Functions:** (`rotate_servo_impl`)
+    - [X] **OLED Display Functions:** (`display_on_oled_impl`)
+    - [X] **Ultrasonic Sensor Functions:** (`get_distance_from_obstacle_impl`)
+    - [ ] **Buzzer Melody Playback Function:**
+        - Implement `play_melody_impl(notes)` in `main.py` using PWM to control the buzzer for specified frequencies and durations.
+    - [X] **Ensure proper `GPIO.cleanup()` on program exit.** (Includes buzzer pin consideration)
 
 ### 5.3 Configure Function Calling in Gemini Session Setup
 
-    - [X] Create `Tool` objects containing `functionDeclarations` for LED, Servo, Ultrasonic, and OLED control schemas from 5.1.
-    - [X] In `main.py`'s `gemini_processor`, add these `Tool` objects to the `tools` array within the `setup` message sent to Gemini.
-    - *Reference: `docs/function-call-api.md`, `docs/gemini-live-api.md` (Function Calling example), `gemini-web-dev/src/components/altair/Altair.tsx` for tool declaration structure.*
+    - [X] Create `Tool` objects containing `functionDeclarations` for LED, Servo, Ultrasonic, and OLED control schemas.
+    - [ ] Add `play_melody` function schema to the `Tool` objects in `main.py`'s `gemini_processor` setup message.
+    - *Reference: `docs/function-call-api.md`, `docs/gemini-live-api.md` (Function Calling example).*
 
 ### 5.4 Handle Tool Calls from Gemini
 
-    - [X] In `main.py`'s `receive_from_gemini` (or a dedicated tool call handler):
-        - Listen for `BidiGenerateContentToolCall` messages (`message_data['toolCall']`).
-        - Parse the `functionCalls` array.
-        - For each `functionCall` for `set_led_state`, `rotate_servo`, `get_distance_from_obstacle`, and `display_on_oled`:
-            - Identify the function `name`.
-            - Extract arguments from `args`.
-            - Asynchronously execute the Python implementation function.
+    - [X] In `main.py`'s `receive_from_gemini` (or tool call handler):
+        - Listen for `BidiGenerateContentToolCall` messages.
+        - Parse `functionCalls` for existing hardware.
+    - [ ] Add logic to parse and handle `functionCall` for `play_melody`:
+        - Identify the function `name` as `play_melody`.
+        - Extract `notes` argument.
+        - Asynchronously execute `play_melody_impl(notes)`.
     - *Reference: `docs/google-websocket-api.md` (BidiGenerateContentToolCall, FunctionCall structure).*
 
 ### 5.5 Send Tool Responses to Gemini
 
-    - [X] After `set_led_state_impl`, `rotate_servo_impl`, `get_distance_from_obstacle_impl`, and `display_on_oled_impl` executes:
-        - Prepare a `FunctionResponse` object.
-            - Use the `id` from the original `FunctionCall`.
-            - Set `name` to the original function name.
-            - Populate `response.output` with a JSON object indicating success/failure and any relevant data.
-    - [X] Send an array of these `FunctionResponse` objects back to Gemini using the `BidiGenerateContentToolResponse` message.
-    - *Reference: `docs/google-websocket-api.md` (BidiGenerateContentToolResponse, FunctionResponse structure). `gemini-web-dev/src/components/altair/Altair.tsx` has an example of sending tool responses.*
+    - [X] After existing hardware control functions execute, prepare and send `FunctionResponse` objects.
+    - [ ] After `play_melody_impl` executes:
+        - Prepare a `FunctionResponse` object (using `id` from original call, `name` as `play_melody`).
+        - Populate `response.output` with success/failure status.
+    - [ ] Send this `FunctionResponse` back to Gemini.
+    - *Reference: `docs/google-websocket-api.md` (BidiGenerateContentToolResponse, FunctionResponse structure).*
 
 ## Phase 6: Sensor Integration and OLED Display (Refined based on new requirements)
 
@@ -203,8 +187,8 @@ _This phase is largely integrated into Phase 5 through Function Calling for the 
     - [ ] **Strategy for displaying full responses:**
         - In `main.py`'s `receive_from_gemini`:
             - Accumulate text parts from `outputTranscription` (or `modelTurn.parts.text` if AUDIO modality is off for some reason).
-            - Once a "turn" is considered complete by Gemini (e.g., after a series of audio chunks or a `turnComplete` message for text), or after a short delay of no new text, call the `display_on_oled` function (which Gemini would invoke via function calling, or `main.py` could call it directly with the accumulated text).
-            - The `display_on_oled_impl` function will need to handle text wrapping and potentially scrolling for longer messages on the small OLED screen. (Basic wrapping exists, scrolling needs review for long texts).
+            - Once a "turn" is considered complete by Gemini, call the `display_on_oled` function.
+            - The `display_on_oled_impl` function will need to handle text wrapping and potentially scrolling for longer messages. (Basic wrapping exists, scrolling needs review).
     - [ ] Test voice commands that elicit longer responses from Gemini to see how they are displayed on the OLED.
 
 ## Phase 7: Web Client Enhancements and User Interface
@@ -212,76 +196,59 @@ _This phase is largely integrated into Phase 5 through Function Calling for the 
 ### 7.1 Improved UI/UX
 
     - [ ] Design a more polished and user-friendly interface on the web client (HTML, CSS, JavaScript).
-    - [ ] Visual indicators for:
-        - WebSocket connection status (RPi, Gemini).
-        - Microphone recording state (e.g., idle, listening, sending).
-        - Gemini processing state (e.g., "Thinking...").
-    - [ ] Clear display area for Gemini's text responses and audio/input transcriptions.
-    - [ ] Controls for starting/stopping the session, muting/unmuting microphone.
-    - *Reference: `gemini-web-dev` for UI component ideas (e.g., `ControlTray`, `SidePanel`, `AudioPulse`).*
+    - [ ] Visual indicators for: WebSocket connection status, microphone state, Gemini processing state.
+    - [ ] Clear display area for Gemini's text responses and transcriptions.
+    - [ ] Controls for session start/stop, mute/unmute.
+    - *Reference: `gemini-web-dev` for UI component ideas.*
 
 ### 7.2 Displaying Multimodal Information
 
-    - [ ] If RPi sends status updates about hardware changes (e.g., "LED is now ON") or summarized sensor readings, display this information appropriately on the web client.
+    - [ ] If RPi sends status updates about hardware changes or sensor readings, display this on the web client.
 
 ## Phase 8: System Testing, Refinement, and Documentation
 
 ### 8.1 End-to-End Testing
 
     - [ ] Test all core features thoroughly:
-        - Bidirectional audio streaming and natural conversation flow (with "Leda" voice).
+        - Bidirectional audio streaming (with "Leda" voice) and natural conversation flow.
         - Video streaming and Gemini's ability to "see".
-        - Function calling for all defined hardware (LEDs, servo, OLED).
+        - Function calling for all defined hardware (LEDs, servo, OLED, **Buzzer/Melody**).
         - Sensor data integration and Gemini's reaction to it.
         - Google Search integration.
-    - [ ] Test under various network conditions (if possible simulate latency/packet loss).
-    - [ ] Test various voice commands and edge cases.
+    - [ ] Test under various network conditions.
+    - [ ] Test various voice commands and edge cases (including for melody playback, e.g., "Play a C major scale").
 
 ### 8.2 Latency Optimization
 
-    - [ ] Profile audio/video processing pipelines on RPi and client.
-    - [ ] Optimize data chunk sizes and streaming frequencies for minimal perceived latency.
-    - [ ] Investigate Gemini API settings that might affect latency (e.g., model choice, specific configurations).
+    - [ ] Profile audio/video processing pipelines.
+    - [ ] Optimize data chunk sizes and streaming frequencies.
+    - [ ] Investigate Gemini API settings affecting latency.
 
 ### 8.3 Error Handling and Robustness
 
-    - [ ] Implement comprehensive error handling in `main.py` for:
-        - RPi WebSocket server errors (connection drops, etc.).
-        - Gemini Live API WebSocket errors (connection drops, API errors, message parsing).
-        - Hardware control errors (GPIO issues, sensor read failures).
-    - [ ] Implement retry mechanisms or graceful degradation where appropriate.
-    - [ ] Add error handling to the web client (WebSocket connection, media device access).
+    - [ ] Implement comprehensive error handling in `main.py` (RPi WebSocket, Gemini API, hardware control).
+    - [ ] Implement retry mechanisms or graceful degradation.
+    - [ ] Add error handling to the web client.
 
 ### 8.4 Logging
 
-    - [ ] Implement robust logging in `main.py` for diagnostics, saving to a file. Log key events, errors, messages sent/received.
-    - [ ] Utilize browser console logging on the web client for debugging.
-    - *Reference: `gemini-web-dev/src/lib/store-logger.ts` for advanced client-side logging patterns, adapt for simple console logs or server-side needs.*
+    - [ ] Implement robust logging in `main.py` (key events, errors, messages).
+    - [ ] Utilize browser console logging on the web client.
 
 ### 8.5 Code Documentation and Project README
 
-    - [ ] Add clear comments and docstrings to Python code in `main.py` and any helper modules.
-    - [ ] Document JavaScript code on the web client.
-    - [ ] Create/Update a `README.md` for the `raspberry-pi-project` detailing:
-        - Project overview and features.
-        - Hardware setup instructions.
-        - Software installation steps.
-        - How to run the system.
-        - API key configuration.
+    - [ ] Add comments and docstrings to Python and JavaScript code.
+    - [ ] Update `README.md` for the `raspberry-pi-project` (overview, setup, usage, API key config).
 
 ### 8.6 Google Search Grounding Integration
 
-    - [ ] Integrate Google Search as a tool for real-time web information.
-    - [ ] Add `{'googleSearch': {}}` to the `tools` array in `BidiGenerateContentSetup` in `main.py`.
+    - [X] Integrate Google Search as a tool (`main.py` updated).
     - [ ] Handle/display `groundingMetadata` from Gemini responses if applicable.
     - *Reference: `docs/google-search-api.md` (Method 1: Search as a Tool).*
 
 ### 8.7 (Optional) Advanced Gemini Live API Features
 
-    - [ ] Explore and implement if useful:
-        - `automaticActivityDetection` configuration.
-        - `sessionResumption` for reconnecting.
-        - `contextWindowCompression` for long conversations.
-    - *Reference: `docs/google-websocket-api.md` for these configurations.*
+    - [ ] Explore: `automaticActivityDetection`, `sessionResumption`, `contextWindowCompression`.
+    - *Reference: `docs/google-websocket-api.md`.*
 
 This task list provides a structured approach. You can adjust the order and granularity based on your priorities and development flow. Good luck!
