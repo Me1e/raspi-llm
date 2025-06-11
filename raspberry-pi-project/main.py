@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 logging.info(f"Using websockets library version: {websockets.__version__}")
 
 # --- Gemini API 설정 ---
-GEMINI_API_KEY = "AIzaSyBNCrgI7NRYWBLtpnWi8d40GFPaGYGgZSw" # 실제 API 키로 교체!
+GEMINI_API_KEY = "" # 실제 API 키로 교체!
 GEMINI_MODEL_NAME = "gemini-2.0-flash-live-001"
 GEMINI_WS_URL_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 # -------------------------
