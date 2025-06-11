@@ -151,6 +151,10 @@
                 logMessage('Starting audio playback from Gemini.', 'system');
               }
               playAudioChunk(data.payload); // Base64 인코딩된 오디오 데이터 재생
+            } else if (data.type === 'clear_audio_buffer') {
+              // 인터럽트 시 오디오 버퍼 초기화
+              clearAudioBuffer();
+              logMessage(`${data.message} - Audio buffer cleared.`, 'system');
             } else {
               logMessage(`Received Unknown JSON: ${event.data}`, 'received');
             }
@@ -345,6 +349,24 @@
         } else {
           logMessage('Recording stopped.', 'system');
         }
+      }
+
+      // 오디오 버퍼 초기화 함수 (인터럽트 시 사용)
+      function clearAudioBuffer() {
+        audioQueue.length = 0; // 큐 초기화
+        isPlayingFromQueue = false; // 재생 상태 초기화
+
+        // 현재 재생 중인 AudioContext 정리 (선택적)
+        if (outputAudioContext && outputAudioContext.state !== 'closed') {
+          try {
+            // 새로운 오디오가 들어올 때까지 정지
+            // outputAudioContext.suspend(); // 완전히 정지하지 말고 대기 상태로
+          } catch (e) {
+            console.warn('Error suspending audio context:', e);
+          }
+        }
+
+        console.log('Audio buffer cleared due to interruption');
       }
 
       // Base64 오디오 청크를 디코딩하고 재생 큐에 추가하는 함수

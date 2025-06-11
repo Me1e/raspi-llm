@@ -218,9 +218,11 @@ def rotate_servo_impl(degrees: int, direction: str = None):
     if direction:
         direction = direction.lower()
         if direction == "clockwise":
-            target_angle = current_servo_angle + degrees
-        elif direction == "counter_clockwise" or direction == "anticlockwise":
+            # 시계방향: 각도를 감소시킴 (PWM duty cycle 관점에서)
             target_angle = current_servo_angle - degrees
+        elif direction == "counter_clockwise" or direction == "anticlockwise":
+            # 반시계방향: 각도를 증가시킴
+            target_angle = current_servo_angle + degrees
         else:
             return {"success": False, "message": f"Unknown direction: {direction}. Use 'clockwise' or 'counter_clockwise'."}
     else: # direction이 없으면 degrees를 절대 각도로 간주
@@ -631,6 +633,9 @@ async def gemini_processor():
 
                                 if "interrupted" in server_content and server_content["interrupted"]:
                                     logging.info("Gemini: Interrupted by new input")
+                                    # 인터럽트 시 웹 클라이언트에 오디오 버퍼 초기화 명령 전송
+                                    interrupt_message = {"type": "clear_audio_buffer", "message": "[Gemini: Interrupted]"}
+                                    await gemini_to_web_queue.put(json.dumps(interrupt_message))
                                     if message_for_web is None: message_for_web = {"type": "status", "message": "[Gemini: Interrupted]"}
                                 
                                 if "turnComplete" in server_content and server_content["turnComplete"]:
