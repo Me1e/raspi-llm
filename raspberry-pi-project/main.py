@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 logging.info(f"Using websockets library version: {websockets.__version__}")
 
 # --- Gemini API 설정 ---
-GEMINI_API_KEY = "AIzaSyBeDF179TIsqdx6JskBE45k3it9QNqdkBY" # 실제 API 키로 교체!
+GEMINI_API_KEY = "AIzaSyBNCrgI7NRYWBLtpnWi8d40GFPaGYGgZSw" # 실제 API 키로 교체!
 GEMINI_MODEL_NAME = "gemini-2.0-flash-live-001"
 GEMINI_WS_URL_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 # -------------------------
@@ -45,8 +45,8 @@ async def gemini_processor():
                         "model": f"models/{GEMINI_MODEL_NAME}",
                         "generationConfig": {
                             "responseModalities": ["AUDIO"], # 오디오 응답 요청으로 변경
-                             "outputAudioTranscription": {} # 오디오 응답에 대한 텍스트 트랜스크립션도 요청 (디버깅/표시용)
                         },
+                        "outputAudioTranscription": {}, # 최상위 setup 객체 내로 이동
                         "systemInstruction": {
                             "parts": [{"text": "You are a friendly and helpful Raspberry Pi assistant."}]
                         }
