@@ -513,9 +513,9 @@ async def gemini_processor():
                         "model": f"models/{GEMINI_MODEL_NAME}",
                         "generationConfig": {
                             "responseModalities": ["AUDIO"],
-                            "speechConfig": {
-                                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Leda"}}
-                            }
+                            # "speechConfig": {
+                            #     "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Leda"}}
+                            # }
                         },
                         "outputAudioTranscription": {},
                         "systemInstruction": {
