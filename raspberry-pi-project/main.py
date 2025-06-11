@@ -400,6 +400,132 @@ async def stream_video_to_gemini():
             logging.debug("Gemini not connected or camera not ready. Skipping video frame.")
             await asyncio.sleep(1) # 대기
 
+# --- 미리 정의된 멜로디 라이브러리 ---
+PREDEFINED_MELODIES = {
+    "twinkle_star": {
+        "name": "Twinkle Twinkle Little Star",
+        "notes": [
+            {"frequency": 523, "duration": 400},  # C
+            {"frequency": 523, "duration": 400},  # C  
+            {"frequency": 784, "duration": 400},  # G
+            {"frequency": 784, "duration": 400},  # G
+            {"frequency": 880, "duration": 400},  # A
+            {"frequency": 880, "duration": 400},  # A
+            {"frequency": 784, "duration": 800},  # G
+            {"frequency": 698, "duration": 400},  # F
+            {"frequency": 698, "duration": 400},  # F
+            {"frequency": 659, "duration": 400},  # E
+            {"frequency": 659, "duration": 400},  # E
+            {"frequency": 587, "duration": 400},  # D
+            {"frequency": 587, "duration": 400},  # D
+            {"frequency": 523, "duration": 800},  # C
+        ]
+    },
+    "happy_birthday": {
+        "name": "Happy Birthday",
+        "notes": [
+            {"frequency": 523, "duration": 300},  # C
+            {"frequency": 523, "duration": 300},  # C
+            {"frequency": 587, "duration": 600},  # D
+            {"frequency": 523, "duration": 600},  # C
+            {"frequency": 698, "duration": 600},  # F
+            {"frequency": 659, "duration": 1200}, # E
+            {"frequency": 523, "duration": 300},  # C
+            {"frequency": 523, "duration": 300},  # C
+            {"frequency": 587, "duration": 600},  # D
+            {"frequency": 523, "duration": 600},  # C
+            {"frequency": 784, "duration": 600},  # G
+            {"frequency": 698, "duration": 1200}, # F
+        ]
+    },
+    "mary_lamb": {
+        "name": "Mary Had a Little Lamb",
+        "notes": [
+            {"frequency": 659, "duration": 400},  # E
+            {"frequency": 587, "duration": 400},  # D
+            {"frequency": 523, "duration": 400},  # C
+            {"frequency": 587, "duration": 400},  # D
+            {"frequency": 659, "duration": 400},  # E
+            {"frequency": 659, "duration": 400},  # E
+            {"frequency": 659, "duration": 800},  # E
+            {"frequency": 587, "duration": 400},  # D
+            {"frequency": 587, "duration": 400},  # D
+            {"frequency": 587, "duration": 800},  # D
+            {"frequency": 659, "duration": 400},  # E
+            {"frequency": 784, "duration": 400},  # G
+            {"frequency": 784, "duration": 800},  # G
+        ]
+    },
+    "ode_to_joy": {
+        "name": "Ode to Joy (Beethoven)",
+        "notes": [
+            {"frequency": 659, "duration": 400},  # E
+            {"frequency": 659, "duration": 400},  # E
+            {"frequency": 698, "duration": 400},  # F
+            {"frequency": 784, "duration": 400},  # G
+            {"frequency": 784, "duration": 400},  # G
+            {"frequency": 698, "duration": 400},  # F
+            {"frequency": 659, "duration": 400},  # E
+            {"frequency": 587, "duration": 400},  # D
+            {"frequency": 523, "duration": 400},  # C
+            {"frequency": 523, "duration": 400},  # C
+            {"frequency": 587, "duration": 400},  # D
+            {"frequency": 659, "duration": 400},  # E
+            {"frequency": 659, "duration": 600},  # E
+            {"frequency": 587, "duration": 200},  # D
+            {"frequency": 587, "duration": 800},  # D
+        ]
+    },
+    "fur_elise": {
+        "name": "Für Elise (Beethoven)",
+        "notes": [
+            {"frequency": 659, "duration": 300},  # E
+            {"frequency": 622, "duration": 300},  # D#
+            {"frequency": 659, "duration": 300},  # E
+            {"frequency": 622, "duration": 300},  # D#
+            {"frequency": 659, "duration": 300},  # E
+            {"frequency": 494, "duration": 300},  # B
+            {"frequency": 587, "duration": 300},  # D
+            {"frequency": 523, "duration": 300},  # C
+            {"frequency": 440, "duration": 600},  # A
+            {"frequency": 262, "duration": 300},  # C
+            {"frequency": 330, "duration": 300},  # E
+            {"frequency": 440, "duration": 300},  # A
+            {"frequency": 494, "duration": 600},  # B
+        ]
+    },
+    "canon": {
+        "name": "Canon in D (Pachelbel)",
+        "notes": [
+            {"frequency": 587, "duration": 800},  # D
+            {"frequency": 440, "duration": 800},  # A
+            {"frequency": 494, "duration": 800},  # B
+            {"frequency": 370, "duration": 800},  # F#
+            {"frequency": 392, "duration": 800},  # G
+            {"frequency": 587, "duration": 800},  # D
+            {"frequency": 392, "duration": 800},  # G
+            {"frequency": 440, "duration": 800},  # A
+            {"frequency": 587, "duration": 400},  # D
+            {"frequency": 523, "duration": 400},  # C#
+            {"frequency": 587, "duration": 400},  # D
+            {"frequency": 440, "duration": 400},  # A
+            {"frequency": 494, "duration": 400},  # B
+            {"frequency": 370, "duration": 400},  # F#
+            {"frequency": 392, "duration": 400},  # G
+            {"frequency": 440, "duration": 400},  # A
+        ]
+    }
+}
+
+def get_predefined_melody(melody_name: str):
+    """미리 정의된 멜로디를 가져옵니다."""
+    melody_name = melody_name.lower().replace(" ", "_").replace("-", "_")
+    return PREDEFINED_MELODIES.get(melody_name)
+
+def list_available_melodies():
+    """사용 가능한 멜로디 목록을 반환합니다."""
+    return {key: value["name"] for key, value in PREDEFINED_MELODIES.items()}
+
 # --- Function Call 스키마 정의 --- (Task 5.1의 결과물, Task 5.3에서 사용됨)
 led_tool_schema = {
     "name": "set_led_state",
@@ -489,6 +615,22 @@ buzzer_tool_schema = {
     }
 }
 
+# 미리 정의된 멜로디 재생용 스키마
+predefined_melody_tool_schema = {
+    "name": "play_predefined_melody",
+    "description": "Plays a well-known, beautiful melody from a predefined collection. Use this for requests like 'play beautiful music', 'play a famous song', or when user wants high-quality melodies.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "melody_name": {
+                "type": "STRING",
+                "description": "Name of the predefined melody to play. Available options: 'twinkle_star' (Twinkle Twinkle Little Star), 'happy_birthday' (Happy Birthday), 'mary_lamb' (Mary Had a Little Lamb), 'ode_to_joy' (Ode to Joy by Beethoven), 'fur_elise' (Für Elise by Beethoven), 'canon' (Canon in D by Pachelbel)"
+            }
+        },
+        "required": ["melody_name"]
+    }
+}
+
 async def gemini_processor():
     global gemini_websocket_connection, accumulated_transcription_for_oled
     if GEMINI_API_KEY == "YOUR_API_KEY_HERE":
@@ -506,7 +648,7 @@ async def gemini_processor():
 
                 # Task 5.3: Function Calling 설정 추가
                 tools_config = [
-                    {"functionDeclarations": [led_tool_schema, servo_tool_schema, ultrasonic_tool_schema, oled_tool_schema, buzzer_tool_schema]},
+                    {"functionDeclarations": [led_tool_schema, servo_tool_schema, ultrasonic_tool_schema, oled_tool_schema, buzzer_tool_schema, predefined_melody_tool_schema]},
                     {"googleSearch": {}}
                 ]
 
@@ -685,6 +827,18 @@ async def gemini_processor():
                                         elif fc_name == "play_melody":
                                             notes_to_play = fc_args.get("notes", [])
                                             tool_call_result = play_melody_impl(notes_to_play)
+                                        elif fc_name == "play_predefined_melody":
+                                            melody_name = fc_args.get("melody_name")
+                                            if melody_name:
+                                                melody = get_predefined_melody(melody_name)
+                                                if melody:
+                                                    logging.info(f"Playing predefined melody: {melody['name']}")
+                                                    tool_call_result = play_melody_impl(melody["notes"])
+                                                else:
+                                                    available = list_available_melodies()
+                                                    tool_call_result = {"success": False, "message": f"Unknown melody '{melody_name}'. Available: {list(available.keys())}"}
+                                            else:
+                                                tool_call_result = {"success": False, "message": "Missing melody_name for predefined melody."}
                                         else:
                                             logging.warning(f"Unknown function call name: {fc_name}")
                                             tool_call_result = {"success": False, "message": f"Unknown function: {fc_name}"}
