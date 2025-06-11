@@ -108,13 +108,13 @@ def setup_oled():
         display_draw_obj = ImageDraw.Draw(display_image_obj)
         
         try:
-            loaded_font = ImageFont.truetype("NanumGothicCoding.ttf", 14) # 폰트 크기 14로 수정
+            loaded_font = ImageFont.truetype("NanumGothicCoding.ttf", 10) # 폰트 크기 10로 수정
         except IOError:
             logging.warning("NanumGothicCoding.ttf not found. Using default font.")
             loaded_font = ImageFont.load_default()
         
         logging.info("OLED display initialized successfully.")
-        display_text_on_oled_impl("AI Ready!", max_lines=1, line_height=16) # line_height도 조정
+        display_text_on_oled_impl("AI Ready!", max_lines=1, line_height=12) # line_height도 조정
         return True
     except ValueError as e:
         logging.error(f"OLED I2C setup error (ValueError): {e}. Is I2C enabled and address 0x3C correct?")
