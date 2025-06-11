@@ -11,6 +11,13 @@ import io # 이미지 스트림 처리를 위해
 import time # 프레임 간격 제어를 위해
 import RPi.GPIO as GPIO # RPi.GPIO 임포트
 
+# OLED 라이브러리 임포트
+import board
+import busio
+import digitalio
+from PIL import Image, ImageDraw, ImageFont
+import adafruit_ssd1306
+
 # 기본 로깅 설정
 logging.basicConfig(level=logging.INFO)
 logging.info(f"Using websockets library version: {websockets.__version__}")
@@ -25,6 +32,11 @@ SERVO_PIN = 18 # 서보모터 GPIO 핀
 TRIG_PIN = 23 # 초음파 센서 Trig 핀
 ECHO_PIN = 24 # 초음파 센서 Echo 핀
 
+# OLED 설정
+OLED_WIDTH = 128
+OLED_HEIGHT = 64
+OLED_RESET_PIN_BCM = 4 # GPIO4, 물리적 핀 7. 실제 연결된 핀으로 수정하거나, None으로 설정 가능
+
 led_pins = {
     "green": GREEN_LED_PIN,
     "yellow": YELLOW_LED_PIN,
@@ -34,6 +46,10 @@ led_pins = {
 
 servo_motor = None # PWM 객체 저장용
 current_servo_angle = 90 # 서보 모터의 현재 각도 추정 (0-180, 초기값은 중앙으로)
+oled_display = None
+display_draw_obj = None
+display_image_obj = None
+loaded_font = None
 
 def setup_gpio():
     global servo_motor, current_servo_angle
@@ -63,6 +79,49 @@ def setup_gpio():
     time.sleep(2) # 센서 안정화 시간
     logging.info("Ultrasonic sensor settled.")
 
+def setup_oled():
+    global oled_display, display_draw_obj, display_image_obj, loaded_font
+    try:
+        logging.info("Initializing OLED display...")
+        i2c = board.I2C()  # uses board.SCL and board.SDA
+        reset_pin_obj = None
+        if OLED_RESET_PIN_BCM is not None:
+            # board 라이브러리는 물리적 핀 이름 (예: D4)을 사용하거나 BCM 번호를 직접 사용할 수 있게 digitalio.DigitalInOut로 매핑 필요
+            # digitalio.DigitalInOut는 board.D<GPIO_NUMBER> 형태를 기대함. board.D4는 GPIO4(BCM).
+            # 실제 board.D4가 BCM 4와 매핑되는지 확인 필요. 여기서는 BCM 번호를 직접 사용 가능한 방식으로 시도.
+            try:
+                 # board.D4가 GPIO4(BCM)를 가리킨다고 가정.
+                reset_pin_obj = digitalio.DigitalInOut(getattr(board, f"D{OLED_RESET_PIN_BCM}")) 
+            except AttributeError:
+                logging.warning(f"Board pin D{OLED_RESET_PIN_BCM} not found, attempting direct GPIO for OLED reset. This might not work on all platforms without Blinka explicit setup.")
+                # Blinka/board가 BCM 번호를 직접 지원하지 않을 수 있으므로 이 부분은 주의.
+                # 일단은 adafruit_blinka.microcontroller.bcm283x.pin.Pin(OLED_RESET_PIN_BCM) 같은 방식이 필요할 수 있으나 복잡함.
+                # 가장 간단한 것은 reset_pin_obj를 None으로 두는 것. 많은 모듈이 리셋핀 없이도 잘 동작함.
+                reset_pin_obj = None 
+                logging.info(f"OLED Reset Pin D{OLED_RESET_PIN_BCM} not used or not found.")
+
+        oled_display = adafruit_ssd1306.SSD1306_I2C(OLED_WIDTH, OLED_HEIGHT, i2c, addr=0x3C, reset=reset_pin_obj)
+        oled_display.fill(0)
+        oled_display.show()
+        
+        display_image_obj = Image.new("1", (oled_display.width, oled_display.height))
+        display_draw_obj = ImageDraw.Draw(display_image_obj)
+        
+        try:
+            loaded_font = ImageFont.truetype("PixelOperator.ttf", 16) # 폰트 크기 조절 가능
+        except IOError:
+            logging.warning("PixelOperator.ttf not found. Using default font.")
+            loaded_font = ImageFont.load_default()
+        
+        logging.info("OLED display initialized successfully.")
+        display_text_on_oled_impl("AI Assistant Ready!", max_lines=1) # 시작 메시지
+        return True
+    except ValueError as e:
+        logging.error(f"OLED I2C setup error (ValueError): {e}. Is I2C enabled and address 0x3C correct?")
+    except Exception as e:
+        logging.error(f"Failed to initialize OLED display: {e}")
+    return False
+
 def cleanup_gpio():
     if servo_motor:
         servo_motor.stop()
@@ -70,7 +129,7 @@ def cleanup_gpio():
     logging.info("GPIO cleanup done.")
 
 # --- Gemini API 설정 ---
-GEMINI_API_KEY = "" # 실제 API 키로 교체!
+GEMINI_API_KEY = "YOUR_API_KEY_HERE" # 실제 API 키로 교체!
 GEMINI_MODEL_NAME = "gemini-2.0-flash-live-001"
 GEMINI_WS_URL_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 # -------------------------
@@ -197,6 +256,49 @@ def get_distance_from_obstacle_impl():
         error_msg = f"Error measuring distance: {e}"
         logging.error(error_msg)
         return {"success": False, "message": error_msg, "distance_cm": -1}
+
+def display_text_on_oled_impl(text: str, max_lines: int = 4, line_height: int = 10):
+    global display_draw_obj, display_image_obj, oled_display, loaded_font
+    if not oled_display or not display_draw_obj or not display_image_obj or not loaded_font:
+        logging.error("OLED not initialized, cannot display text.")
+        return {"success": False, "message": "OLED not initialized."}
+    try:
+        display_draw_obj.rectangle((0, 0, oled_display.width, oled_display.height), outline=0, fill=0) # Clear
+        
+        words = text.split(' ')
+        lines = []
+        current_line = ""
+        for i, word in enumerate(words):
+            # 폰트 BoundingBox를 사용하여 더 정확한 너비 측정 (PIL 9.2.0+ 필요)
+            # textbbox는 (left, top, right, bottom) 반환
+            if hasattr(display_draw_obj, 'textbbox'):
+                bbox = display_draw_obj.textbbox((0,0), current_line + word + (" " if i < len(words)-1 else ""), font=loaded_font)
+                line_width = bbox[2] - bbox[0]
+            else: # 구버전 PIL 호환 (덜 정확함)
+                line_width = display_draw_obj.textlength(current_line + word + (" " if i < len(words)-1 else ""), font=loaded_font)
+
+            if line_width <= oled_display.width:
+                current_line += word + (" " if i < len(words)-1 else "")
+            else:
+                lines.append(current_line)
+                current_line = word + (" " if i < len(words)-1 else "")
+        lines.append(current_line) # 마지막 줄 추가
+
+        y_text = 0
+        for i, line_content in enumerate(lines):
+            if i >= max_lines: break # 최대 줄 수 제한
+            display_draw_obj.text((0, y_text), line_content, font=loaded_font, fill=255)
+            y_text += line_height # 다음 줄 위치 (폰트 높이에 맞게 조절)
+            if y_text >= oled_display.height: break
+
+        oled_display.image(display_image_obj)
+        oled_display.show()
+        logging.info(f"Displayed on OLED: '{text[:30]}...'")
+        return {"success": True, "message": "Text displayed on OLED."}
+    except Exception as e:
+        error_msg = f"Error displaying on OLED: {e}"
+        logging.error(error_msg)
+        return {"success": False, "message": error_msg}
 
 async def setup_camera():
     global picam2
@@ -332,8 +434,25 @@ ultrasonic_tool_schema = {
     }
 }
 
+oled_tool_schema = {
+    "name": "display_on_oled",
+    "description": "Displays a given text string on the OLED screen.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "text": {
+                "type": "STRING",
+                "description": "The text to display on the OLED screen."
+            }
+            # line_number는 Gemini가 직접 관리하기 어려우므로, 여기서는 text만 받도록 단순화
+            # Python 함수 내부에서 자동 줄바꿈 처리
+        },
+        "required": ["text"]
+    }
+}
+
 async def gemini_processor():
-    global gemini_websocket_connection
+    global gemini_websocket_connection, accumulated_transcription, last_transcription_time
     if GEMINI_API_KEY == "YOUR_API_KEY_HERE":
         logging.error("Gemini API Key is not set. Please update GEMINI_API_KEY in main.py.")
         await gemini_to_web_queue.put(json.dumps({"type": "status", "message": "Error: Gemini API Key not configured on the server."}))
@@ -349,7 +468,7 @@ async def gemini_processor():
 
                 # Task 5.3: Function Calling 설정 추가
                 tools_config = [
-                    {"functionDeclarations": [led_tool_schema, servo_tool_schema, ultrasonic_tool_schema]} # LED 제어 도구 추가
+                    {"functionDeclarations": [led_tool_schema, servo_tool_schema, ultrasonic_tool_schema, oled_tool_schema]} # LED 제어 도구 추가
                     # 추후 다른 도구들 여기에 추가 (예: Servo, OLED, Ultrasonic)
                 ]
 
@@ -383,6 +502,9 @@ async def gemini_processor():
 
                 logging.info("Gemini session setup complete.")
                 await gemini_to_web_queue.put(json.dumps({"type": "status", "message": "[Gemini session ready]"}))
+
+                accumulated_transcription = "" # 새 세션 시작 시 트랜스크립션 초기화
+                last_transcription_time = time.time()
 
                 async def forward_text_to_gemini():
                     while True:
@@ -437,14 +559,16 @@ async def gemini_processor():
                                 
                                 # 텍스트 트랜스크립션 처리 (outputAudioTranscription)
                                 if "outputTranscription" in server_content and server_content["outputTranscription"].get("text"):
-                                    transcription_text = server_content["outputTranscription"]["text"]
-                                    logging.info(f"Received Output Transcription: {transcription_text}")
+                                    transcript = server_content["outputTranscription"]["text"]
+                                    accumulated_transcription += transcript + " "
+                                    last_transcription_time = time.time()
+                                    logging.info(f"Received Output Transcription: {transcript}")
                                     # 오디오 데이터와 트랜스크립션을 별도 메시지로 보낼지, 합칠지 결정 필요.
                                     # 여기서는 별도 상태 메시지로 전송.
                                     if message_for_web is None: # 오디오 데이터가 없는 경우 (예: 텍스트 응답만)
-                                         message_for_web = {"type": "status", "message": f"[Transcript]: {transcription_text}"}
+                                         message_for_web = {"type": "status", "message": f"[Transcript]: {transcript}"}
                                     else: # 오디오 데이터가 이미 있다면, 트랜스크립션은 별도 메시지로.
-                                        await gemini_to_web_queue.put(json.dumps({"type": "status", "message": f"[Transcript]: {transcription_text}"}))
+                                        await gemini_to_web_queue.put(json.dumps({"type": "status", "message": f"[Transcript]: {transcript}"}))
 
 
                                 # 텍스트 응답 (예: responseModalities가 TEXT일 때 또는 오류 메시지)
@@ -502,6 +626,13 @@ async def gemini_processor():
                                         elif fc_name == "get_distance_from_obstacle": # 초음파 센서 함수 호출
                                             logging.info("Executing tool call: get_distance_from_obstacle()")
                                             tool_call_result = get_distance_from_obstacle_impl()
+                                        elif fc_name == "display_on_oled": # OLED 함수 호출 처리
+                                            text_to_display = fc_args.get("text")
+                                            if text_to_display is not None:
+                                                logging.info(f"Executing tool: display_on_oled(text='{text_to_display[:20]}...')")
+                                                tool_call_result = display_text_on_oled_impl(text_to_display)
+                                            else:
+                                                tool_call_result = {"success": False, "message": "Missing text for OLED."}
                                         else:
                                             logging.warning(f"Unknown function call name: {fc_name}")
                                             tool_call_result = {"success": False, "message": f"Unknown function: {fc_name}"}
@@ -548,9 +679,26 @@ async def gemini_processor():
                         except Exception as e_recv:
                             logging.error(f"Error in receive_from_gemini: {e_recv}")
                 
+                # 간단한 Transcription flush 로직 (주기적으로 또는 턴 종료 시 OLED 업데이트)
+                async def transcription_oled_flusher():
+                    global accumulated_transcription, last_transcription_time
+                    while True:
+                        await asyncio.sleep(TRANSCRIPTION_FLUSH_INTERVAL / 2.0)
+                        if gemini_websocket_connection and gemini_websocket_connection.state != State.OPEN: break # Gemini 연결 끊기면 종료
+                        if accumulated_transcription.strip() and (time.time() - last_transcription_time > TRANSCRIPTION_FLUSH_INTERVAL):
+                            logging.info(f"Flushing accumulated transcription to OLED: {accumulated_transcription.strip()}")
+                            # Gemini에게 display_on_oled 함수 호출을 요청하거나 직접 호출.
+                            # 여기서는 Gemini가 알아서 호출하도록 유도 (system prompt에 명시)
+                            # 또는 명시적으로 함수 호출을 Gemini에게 보낼 수도 있음 (clientContent 메시지 사용)
+                            # 가장 간단한 방법은 Gemini가 함수호출로 응답하도록 하는 것.
+                            # display_text_on_oled_impl(accumulated_transcription.strip()) # 직접 호출 예시
+                            # accumulated_transcription = "" # 직접 호출 시 초기화
+                            pass # 현재는 Gemini의 함수 호출에 의존
+
                 await asyncio.gather(
                     forward_text_to_gemini(),
-                    receive_from_gemini()
+                    receive_from_gemini(),
+                    transcription_oled_flusher() # 트랜스크립션 OLED 업데이트 태스크 추가
                 )
 
         except (websockets.exceptions.WebSocketException, ConnectionRefusedError, OSError) as e:
@@ -642,6 +790,9 @@ async def start_main_server():
     logging.info(f"Starting RPi WebSocket server on ws://{server_host}:{server_port}")
 
     setup_gpio() # GPIO 초기화 호출
+    if not setup_oled(): # OLED 설정 시도
+        logging.warning("OLED setup failed. Text display on OLED will not be available.")
+        # OLED 실패 시에도 프로그램은 계속 실행되도록 처리
 
     asyncio.create_task(gemini_processor())
     asyncio.create_task(broadcast_gemini_responses())
@@ -660,5 +811,11 @@ if __name__ == "__main__":
     except Exception as e:
         logging.error(f"Failed to start main server: {e}")
     finally:
+        if oled_display: # OLED 화면 정리
+            try:
+                display_draw_obj.rectangle((0,0,OLED_WIDTH,OLED_HEIGHT), outline=0, fill=0)
+                oled_display.show()
+            except Exception as e_oled_clean:
+                logging.error(f"Error clearing OLED on exit: {e_oled_clean}")
         cleanup_gpio() # 프로그램 종료 시 GPIO 정리
         logging.info("GPIO cleanup finished. Exiting.")

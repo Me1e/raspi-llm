@@ -129,12 +129,12 @@ _This phase focuses on enabling Gemini to control connected hardware components 
         - *Consider a function like `set_servo_angle(angle: int)` for absolute positioning if more suitable.*
     - [ ] **OLED Display Control:**
         - `display_on_oled(text: string, line_number: int | null)`: OLED에 주어진 텍스트를 표시합니다. 여러 줄 표시를 위해 줄 번호(선택적)를 받을 수 있습니다. 긴 텍스트는 자동 줄 바꿈 또는 스크롤 처리 필요.
-    - [ ] **Ultrasonic Sensor Reading:**
+    - [X] **Ultrasonic Sensor Reading:**
         - `get_distance_from_obstacle()`: 초음파 센서를 사용하여 전방 장애물까지의 거리를 cm 단위로 반환합니다. (Gemini가 이 함수를 호출하여 정보를 얻음)
 
 ### 5.2 Implement Hardware Control Functions in Python
 
-    - [X] **GPIO Pin Setup:** (LED 및 Servo 부분 완료)
+    - [X] **GPIO Pin Setup:** (LED, Servo, Ultrasonic 부분 완료)
         - Define GPIO pin numbers for Green, Yellow, Red, White LEDs.
         - Define GPIO pin number for Servo Motor PWM.
         - Define GPIO pin numbers for Ultrasonic Sensor (Trig, Echo).
@@ -155,15 +155,15 @@ _This phase focuses on enabling Gemini to control connected hardware components 
             - Handling multi-line text (splitting, positioning).
             - Buffering incoming text from Gemini (since it arrives word by word) and displaying coherently.
         - Implement `display_on_oled_impl(text_to_display, line_num)` to use these utilities.
-    - [ ] **Ultrasonic Sensor Functions:**
+    - [X] **Ultrasonic Sensor Functions:**
         - Implement Python function `get_distance_from_obstacle_impl()` based on the reference code:
             - Trigger pulse, measure echo duration.
             - Calculate distance and return it.
-    - [X] **Ensure proper `GPIO.cleanup()` on program exit.** (LED 및 Servo 관련 부분 확인)
+    - [X] **Ensure proper `GPIO.cleanup()` on program exit.** (LED, Servo, Ultrasonic 관련 부분 확인)
 
 ### 5.3 Configure Function Calling in Gemini Session Setup
 
-    - [X] Create `Tool` objects containing `functionDeclarations` for LED and Servo control schemas from 5.1.
+    - [X] Create `Tool` objects containing `functionDeclarations` for LED, Servo, and Ultrasonic control schemas from 5.1.
     - [X] In `main.py`'s `gemini_processor`, add these `Tool` objects to the `tools` array within the `setup` message sent to Gemini.
     - *Reference: `docs/function-call-api.md`, `docs/gemini-live-api.md` (Function Calling example), `gemini-web-dev/src/components/altair/Altair.tsx` for tool declaration structure.*
 
@@ -172,7 +172,7 @@ _This phase focuses on enabling Gemini to control connected hardware components 
     - [X] In `main.py`'s `receive_from_gemini` (or a dedicated tool call handler):
         - Listen for `BidiGenerateContentToolCall` messages (`message_data['toolCall']`).
         - Parse the `functionCalls` array.
-        - For each `functionCall` for `set_led_state` and `rotate_servo`:
+        - For each `functionCall` for `set_led_state`, `rotate_servo`, and `get_distance_from_obstacle`:
             - Identify the function `name`.
             - Extract arguments from `args`.
             - Asynchronously execute the Python implementation function.
@@ -180,7 +180,7 @@ _This phase focuses on enabling Gemini to control connected hardware components 
 
 ### 5.5 Send Tool Responses to Gemini
 
-    - [X] After `set_led_state_impl` and `rotate_servo_impl` executes:
+    - [X] After `set_led_state_impl`, `rotate_servo_impl`, and `get_distance_from_obstacle_impl` executes:
         - Prepare a `FunctionResponse` object.
             - Use the `id` from the original `FunctionCall`.
             - Set `name` to the original function name.
@@ -194,9 +194,9 @@ _This phase is largely integrated into Phase 5 through Function Calling for the 
 
 ### 6.1 Sensor Data Usage (via Function Calling)
 
-    - [ ] Test voice commands like "현재 정면의 장애물로부터 몇미터 떨어져있어?" or "What's the distance to the object in front?".
-    - [ ] Ensure Gemini calls the `get_distance_from_obstacle` function.
-    - [ ] Ensure Gemini uses the returned distance in its verbal (audio) response to the user.
+    - [X] Test voice commands like "현재 정면의 장애물로부터 몇미터 떨어져있어?" or "What's the distance to the object in front?".
+    - [X] Ensure Gemini calls the `get_distance_from_obstacle` function.
+    - [X] Ensure Gemini uses the returned distance in its verbal (audio) response to the user.
 
 ### 6.2 OLED Display for Gemini's Responses
 
