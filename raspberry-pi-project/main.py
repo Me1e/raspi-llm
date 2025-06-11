@@ -9,10 +9,43 @@ from websockets.connection import State # State 임포트 추가
 from picamera2 import Picamera2 # picamera2 임포트
 import io # 이미지 스트림 처리를 위해
 import time # 프레임 간격 제어를 위해
+import RPi.GPIO as GPIO # RPi.GPIO 임포트
 
 # 기본 로깅 설정
 logging.basicConfig(level=logging.INFO)
 logging.info(f"Using websockets library version: {websockets.__version__}")
+
+# --- GPIO 설정 ---
+# 실제 연결된 GPIO 핀 번호로 수정해야 합니다.
+GREEN_LED_PIN = 17 
+YELLOW_LED_PIN = 27
+RED_LED_PIN = 22
+WHITE_LED_PIN = 10 # 흰색 LED 핀 추가
+# SERVO_PIN = 18 # 추후 서보모터용
+# TRIG_PIN = 23 # 추후 초음파센서용
+# ECHO_PIN = 24 # 추후 초음파센서용
+
+led_pins = {
+    "green": GREEN_LED_PIN,
+    "yellow": YELLOW_LED_PIN,
+    "red": RED_LED_PIN,
+    "white": WHITE_LED_PIN # 흰색 LED 딕셔너리에 추가
+}
+
+def setup_gpio():
+    GPIO.setmode(GPIO.BCM) # BCM 핀 번호 사용
+    GPIO.setwarnings(False) # 경고 메시지 비활성화
+    for pin in led_pins.values():
+        GPIO.setup(pin, GPIO.OUT)
+        GPIO.output(pin, GPIO.LOW) # 초기 상태는 꺼짐
+    # GPIO.setup(SERVO_PIN, GPIO.OUT) # 추후 서보모터용
+    # GPIO.setup(TRIG_PIN, GPIO.OUT) # 추후 초음파센서용
+    # GPIO.setup(ECHO_PIN, GPIO.IN)  # 추후 초음파센서용
+    logging.info("GPIO setup complete for LEDs.")
+
+def cleanup_gpio():
+    GPIO.cleanup()
+    logging.info("GPIO cleanup done.")
 
 # --- Gemini API 설정 ---
 GEMINI_API_KEY = "" # 실제 API 키로 교체!
@@ -31,6 +64,28 @@ gemini_websocket_connection = None
 picam2 = None
 VIDEO_FPS = 1 # 초당 전송할 프레임 수 (조절 가능)
 # ------------------
+
+# --- 하드웨어 제어 함수 (구현부) ---
+def set_led_state_impl(color: str, state: bool):
+    color = color.lower()
+    if color not in led_pins:
+        logging.warning(f"Unknown LED color: {color}")
+        return {"success": False, "message": f"Unknown LED color: {color}"}
+    
+    pin_to_control = led_pins[color]
+    try:
+        if state:
+            GPIO.output(pin_to_control, GPIO.HIGH)
+            msg = f"{color.capitalize()} LED turned on."
+        else:
+            GPIO.output(pin_to_control, GPIO.LOW)
+            msg = f"{color.capitalize()} LED turned off."
+        logging.info(msg)
+        return {"success": True, "message": msg}
+    except Exception as e:
+        error_msg = f"Error controlling {color} LED: {e}"
+        logging.error(error_msg)
+        return {"success": False, "message": error_msg}
 
 async def setup_camera():
     global picam2
@@ -117,6 +172,27 @@ async def stream_video_to_gemini():
             logging.debug("Gemini not connected or camera not ready. Skipping video frame.")
             await asyncio.sleep(1) # 대기
 
+# --- Function Call 스키마 정의 --- (Task 5.1의 결과물, Task 5.3에서 사용됨)
+led_tool_schema = {
+    "name": "set_led_state",
+    "description": "Turns a specific colored LED on or off.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "color": {
+                "type": "STRING",
+                "description": "The color of the LED to control. Accepted values: 'green', 'yellow', 'red', 'white'." # 흰색 추가
+            },
+            "state": {
+                "type": "BOOLEAN",
+                "description": "The desired state of the LED: true for on, false for off."
+            }
+        },
+        "required": ["color", "state"]
+    }
+}
+# (다른 하드웨어 스키마들도 여기에 추가 예정)
+
 async def gemini_processor():
     global gemini_websocket_connection
     if GEMINI_API_KEY == "YOUR_API_KEY_HERE":
@@ -132,6 +208,12 @@ async def gemini_processor():
                 gemini_websocket_connection = gemini_ws 
                 logging.info("Successfully connected to Gemini Live API.")
 
+                # Task 5.3: Function Calling 설정 추가
+                tools_config = [
+                    {"functionDeclarations": [led_tool_schema]} # LED 제어 도구 추가
+                    # 추후 다른 도구들 여기에 추가 (예: Servo, OLED, Ultrasonic)
+                ]
+
                 setup_message = {
                     "setup": {
                         "model": f"models/{GEMINI_MODEL_NAME}",
@@ -140,11 +222,9 @@ async def gemini_processor():
                         },
                         "outputAudioTranscription": {}, # 최상위 setup 객체 내로 이동
                         "systemInstruction": {
-                            "parts": [{"text": "You are a friendly and helpful Raspberry Pi assistant."}]
-                        }
-                        # "speechConfig": { # 필요시 음성 설정 추가 (docs/gemini-live-api.md 참고)
-                        #     "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Puck"}}
-                        # }
+                            "parts": [{"text": "You are a friendly and helpful Raspberry Pi assistant. You can control LEDs of colors green, yellow, red, and white."}] # 흰색 LED 제어 가능 명시
+                        },
+                        "tools": tools_config # 정의된 도구 설정 추가
                     }
                 }
                 await gemini_ws.send(json.dumps(setup_message))
@@ -252,8 +332,53 @@ async def gemini_processor():
                                     # 여기서는 별도 상태 메시지로 전송하지 않음 (오디오 스트림의 끝으로 간주)
 
                             elif "toolCall" in message_data:
-                                logging.info(f"Received Tool Call from Gemini: {message_data['toolCall']}")
-                                message_for_web = {"type": "status", "message": f"[Gemini Tool Call (not yet handled)]"}
+                                tool_call_data = message_data["toolCall"]
+                                logging.info(f"Received Tool Call from Gemini: {tool_call_data}")
+                                
+                                function_responses = [] # 여러 함수 호출에 대한 응답 리스트
+                                
+                                if "functionCalls" in tool_call_data:
+                                    for fc in tool_call_data["functionCalls"]:
+                                        fc_name = fc.get("name")
+                                        fc_args = fc.get("args")
+                                        fc_id = fc.get("id") # 중요: 응답 시 이 ID 사용
+                                        
+                                        tool_call_result = None
+                                        if fc_name == "set_led_state":
+                                            color = fc_args.get("color")
+                                            state = fc_args.get("state")
+                                            if color is not None and state is not None:
+                                                logging.info(f"Executing tool call: set_led_state(color='{color}', state={state})")
+                                                tool_call_result = set_led_state_impl(color, state)
+                                            else:
+                                                tool_call_result = {"success": False, "message": "Missing color or state argument for set_led_state."}
+                                        # (다른 함수 호출들 elif로 추가)
+                                        else:
+                                            logging.warning(f"Unknown function call name: {fc_name}")
+                                            tool_call_result = {"success": False, "message": f"Unknown function: {fc_name}"}
+                                        
+                                        if tool_call_result and fc_id:
+                                            function_responses.append({
+                                                "id": fc_id,
+                                                "name": fc_name,
+                                                "response": {"output": tool_call_result} # Gemini는 'output' 필드 안에 결과를 기대
+                                            })
+                                
+                                # Task 5.5: Send Tool Responses
+                                if function_responses:
+                                    tool_response_message = {
+                                        "toolResponse": {
+                                            "functionResponses": function_responses
+                                        }
+                                    }
+                                    if gemini_websocket_connection and gemini_websocket_connection.state == State.OPEN:
+                                        await gemini_websocket_connection.send(json.dumps(tool_response_message))
+                                        logging.info(f"Sent tool responses to Gemini: {json.dumps(tool_response_message)}")
+                                    else:
+                                        logging.warning("Gemini connection closed. Cannot send tool responses.")
+                                # Tool call에 대한 직접적인 사용자 응답은 보통 없음 (Gemini가 결과를 바탕으로 다시 말함)
+                                # message_for_web = {"type": "status", "message": f"[Executed tool call(s)]"}
+
                             elif "goAway" in message_data:
                                 logging.warning(f"Gemini server sent GoAway: {message_data['goAway']}")
                                 message_for_web = {"type": "status", "message": "[Gemini session ending]"}
@@ -367,6 +492,8 @@ async def start_main_server():
     server_port = 8765
     logging.info(f"Starting RPi WebSocket server on ws://{server_host}:{server_port}")
 
+    setup_gpio() # GPIO 초기화 호출
+
     asyncio.create_task(gemini_processor())
     asyncio.create_task(broadcast_gemini_responses())
     asyncio.create_task(stream_video_to_gemini()) # 비디오 스트리밍 태스크 추가
@@ -383,3 +510,6 @@ if __name__ == "__main__":
         logging.info("Main server shutting down.")
     except Exception as e:
         logging.error(f"Failed to start main server: {e}")
+    finally:
+        cleanup_gpio() # 프로그램 종료 시 GPIO 정리
+        logging.info("GPIO cleanup finished. Exiting.")

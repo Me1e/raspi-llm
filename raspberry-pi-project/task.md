@@ -118,63 +118,103 @@ This document outlines the tasks required to build the Raspberry Pi based Real-t
 
 ## Phase 5: Hardware Control via Function Calling (`main.py`)
 
+_This phase focuses on enabling Gemini to control connected hardware components through voice commands by defining and implementing function calls._
+
 ### 5.1 Define Function Schemas for Hardware
 
-    - [ ] Define JSON schemas (OpenAPI format) for functions to control:
-        - LEDs (e.g., `turn_on_led`, `set_led_color` with parameters like `color`, `pin_number`)
-        - Servo motor (e.g., `rotate_servo` with parameter `angle`)
-        - Buzzer (e.g., `sound_buzzer` with parameters `duration`, `frequency`)
-        - OLED display (e.g., `display_text_on_oled` with parameter `text_to_display`)
-    - *Reference: `docs/function-call-api.md` (Schema examples), `docs/gemini-live-api.md` (Function Calling example). Also review `gemini-web-dev/src/components/altair/Altair.tsx` for tool declaration structure.*
+    - [ ] **LED Control:**
+        - `set_led_state(color: string, state: boolean)`: 특정 색상 LED(예: "green", "yellow", "red")를 켜거나(true) 끕니다(false).
+    - [ ] **Servo Motor Control:**
+        - `rotate_servo(degrees: int, direction: string | null)`: 서보 모터를 지정된 각도만큼 특정 방향("clockwise", "counter_clockwise")으로 상대 회전시키거나, 방향 없이 절대 각도로 설정합니다. (예: `degrees: 60, direction: "clockwise"` 또는 `degrees: 90, direction: null` (90도로 설정)).
+        - *Consider a function like `set_servo_angle(angle: int)` for absolute positioning if more suitable.*
+    - [ ] **OLED Display Control:**
+        - `display_on_oled(text: string, line_number: int | null)`: OLED에 주어진 텍스트를 표시합니다. 여러 줄 표시를 위해 줄 번호(선택적)를 받을 수 있습니다. 긴 텍스트는 자동 줄 바꿈 또는 스크롤 처리 필요.
+    - [ ] **Ultrasonic Sensor Reading:**
+        - `get_distance_from_obstacle()`: 초음파 센서를 사용하여 전방 장애물까지의 거리를 cm 단위로 반환합니다. (Gemini가 이 함수를 호출하여 정보를 얻음)
 
 ### 5.2 Implement Hardware Control Functions in Python
 
-    - [ ] Write Python functions that use `RPi.GPIO` (or chosen alternative) to control the connected hardware components based on the arguments received from Gemini.
-    - [ ] Map function names/parameters from schemas to these Python functions.
-    - [ ] Ensure proper GPIO setup (`GPIO.setmode()`, `GPIO.setup()`) and cleanup (`GPIO.cleanup()`).
+    - [ ] **GPIO Pin Setup:**
+        - Define GPIO pin numbers for Green, Yellow, Red LEDs.
+        - Define GPIO pin number for Servo Motor PWM.
+        - Define GPIO pin numbers for Ultrasonic Sensor (Trig, Echo).
+        - Define I2C pins/address for OLED (referencing `board.I2C()` and `addr=0x3C`).
+        - Initialize `RPi.GPIO` in BCM mode and set up pins as OUT or IN.
+    - [ ] **LED Control Functions:**
+        - Implement Python function `set_led_state_impl(color_name, on_off)` that maps color name to GPIO pin and controls `GPIO.output()`.
+    - [ ] **Servo Motor Control Functions:**
+        - Implement Python function `rotate_servo_impl(degrees, direction)`:
+            - Convert `degrees` and `direction` to appropriate PWM duty cycle changes.
+            - Handle relative vs. absolute rotation logic.
+            - Initialize `GPIO.PWM(SERVO_PIN, 50)` and use `servo.ChangeDutyCycle()`.
+    - [ ] **OLED Display Functions:**
+        - Implement Python class/functions for OLED control based on the reference:
+            - Initialization (`adafruit_ssd1306.SSD1306_I2C`).
+            - Clearing display (`oled.fill(0); oled.show()`).
+            - Drawing text with PIL (`Image`, `ImageDraw`, `ImageFont`).
+            - Handling multi-line text (splitting, positioning).
+            - Buffering incoming text from Gemini (since it arrives word by word) and displaying coherently.
+        - Implement `display_on_oled_impl(text_to_display, line_num)` to use these utilities.
+    - [ ] **Ultrasonic Sensor Functions:**
+        - Implement Python function `get_distance_from_obstacle_impl()` based on the reference code:
+            - Trigger pulse, measure echo duration.
+            - Calculate distance and return it.
+    - [ ] **Ensure proper `GPIO.cleanup()` on program exit.**
 
 ### 5.3 Configure Function Calling in Gemini Session Setup
 
-    - [ ] Create `Tool` objects containing your `functionDeclarations` (the schemas from 5.1).
-    - [ ] Add these `Tool` objects to the `tools` array in the `BidiGenerateContentSetup` message sent to Gemini.
-    - *Reference: `docs/gemini-live-api.md` (Function Calling example), `docs/google-websocket-api.md` (Tool structure).*
+    - [ ] Create `Tool` objects containing `functionDeclarations` for all defined schemas (LEDs, Servo, OLED, Ultrasonic) from 5.1.
+    - [ ] In `main.py`'s `gemini_processor`, add these `Tool` objects to the `tools` array within the `setup` message sent to Gemini.
+    - *Reference: `docs/function-call-api.md`, `docs/gemini-live-api.md` (Function Calling example), `gemini-web-dev/src/components/altair/Altair.tsx` for tool declaration structure.*
 
 ### 5.4 Handle Tool Calls from Gemini
 
-    - [ ] In `main.py`, listen for `BidiGenerateContentToolCall` messages from Gemini.
-    - [ ] Parse the `functionCalls` array from the message.
-    - [ ] For each function call, identify the function name and arguments.
-    - [ ] Execute the corresponding Python hardware control function (from 5.2) with the provided arguments.
+    - [ ] In `main.py`'s `receive_from_gemini` (or a dedicated tool call handler):
+        - Listen for `BidiGenerateContentToolCall` messages (`message_data['toolCall']`).
+        - Parse the `functionCalls` array.
+        - For each `functionCall`:
+            - Identify the function `name` (e.g., "set_led_state", "rotate_servo").
+            - Extract arguments from `args`.
+            - Asynchronously execute the corresponding Python implementation function (e.g., `set_led_state_impl`).
     - *Reference: `docs/google-websocket-api.md` (BidiGenerateContentToolCall, FunctionCall structure).*
 
 ### 5.5 Send Tool Responses to Gemini
 
-    - [ ] After executing a hardware function, prepare a `FunctionResponse` object.
-        - Include the original `id` from the `FunctionCall`.
-        - Set the `name` to the original function name.
-        - Populate the `response` field with the result (e.g., `{"output": {"success": True, "message": "LED turned on"}}`).
+    - [ ] After a Python hardware/sensor function (e.g., `set_led_state_impl`) executes:
+        - Prepare a `FunctionResponse` object.
+            - Use the `id` from the original `FunctionCall`.
+            - Set `name` to the original function name.
+            - Populate `response.output` with a JSON object indicating success/failure and any relevant data (e.g., `{"success": True, "message": "Green LED turned on"}` or `{"distance_cm": 25.5}`).
     - [ ] Send an array of these `FunctionResponse` objects back to Gemini using the `BidiGenerateContentToolResponse` message.
     - *Reference: `docs/google-websocket-api.md` (BidiGenerateContentToolResponse, FunctionResponse structure). `gemini-web-dev/src/components/altair/Altair.tsx` has an example of sending tool responses.*
 
-## Phase 6: Sensor Integration and OLED Display (`main.py`)
+## Phase 6: Sensor Integration and OLED Display (Refined based on new requirements)
 
-### 6.1 Sensor Reading
+_This phase is largely integrated into Phase 5 through Function Calling for the Ultrasonic sensor and OLED display. Specific tasks here focus on how Gemini utilizes this data and presents it._
 
-    - [ ] Implement Python functions to read data from:
-        - Ultrasonic sensor (distance).
-        - Light sensor (ambient light level).
-    - [ ] Handle sensor calibration and data processing/filtering if needed.
+### 6.1 Sensor Data Usage (via Function Calling)
 
-### 6.2 Providing Sensor Data to Gemini
+    - [ ] Test voice commands like "현재 정면의 장애물로부터 몇미터 떨어져있어?" or "What's the distance to the object in front?".
+    - [ ] Ensure Gemini calls the `get_distance_from_obstacle` function.
+    - [ ] Ensure Gemini uses the returned distance in its verbal (audio) response to the user.
 
-    - [ ] **Strategy 1: Via Prompt Augmentation:** Periodically read sensor data, format it as text (e.g., "Current distance: 20cm, Light level: 300 lux"), and include this text in the `BidiGenerateContentClientContent` message along with user's voice/text input.
-    - [ ] **Strategy 2: Via Function Calling:** Define a function (e.g., `get_environment_status`) that Gemini can call. This function would read all relevant sensors and return their states in the `FunctionResponse`.
-    - [ ] Implement the chosen strategy.
+### 6.2 OLED Display for Gemini's Responses
 
-### 6.3 OLED Display Integration (if not fully covered by Function Calling in 5.1)
+    - [ ] When Gemini generates an audio response, its transcription (if `outputAudioTranscription` is enabled) or a summary should be targeted for OLED display.
+    - [ ] **Strategy for displaying full responses:**
+        - In `main.py`'s `receive_from_gemini`:
+            - Accumulate text parts from `outputTranscription` (or `modelTurn.parts.text` if AUDIO modality is off for some reason).
+            - Once a "turn" is considered complete by Gemini (e.g., after a series of audio chunks or a `turnComplete` message for text), or after a short delay of no new text, call the `display_on_oled` function (which Gemini would invoke via function calling, or `main.py` could call it directly with the accumulated text).
+            - The `display_on_oled_impl` function will need to handle text wrapping and potentially scrolling for longer messages on the small OLED screen.
+    - [ ] Test voice commands that elicit longer responses from Gemini to see how they are displayed on the OLED.
 
-    - [ ] Implement Python functions to control the OLED display (initialize, clear, write text, draw basic shapes if needed).
-    - [ ] Gemini can instruct the OLED via a function call (see 5.1), or `main.py` can directly update it with status information (e.g., "Listening...", "Processing...", sensor values).
+### 6.3 Light Sensor (If still planned - Not explicitly in new requirements, but was in `plan.md`)
+
+    - [ ] If light sensor integration is still desired:
+        - Define a function schema: `get_ambient_light_level()`.
+        - Implement the Python function to read the light sensor.
+        - Add to Gemini's tools.
+        - Test by asking "What's the current light level?".
 
 ## Phase 7: Web Client Enhancements and User Interface
 
