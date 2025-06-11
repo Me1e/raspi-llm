@@ -39,12 +39,7 @@
     <h1>WebSocket Test Client</h1>
     <div>
       <label for="wsUrl">WebSocket URL:</label>
-      <input
-        type="text"
-        id="wsUrl"
-        value="ws://RASPBERRY_PI_IP_ADDRESS:8765"
-        size="50"
-      />
+      <input type="text" id="wsUrl" value="ws://192.168.0.3:8765" size="50" />
       <button onclick="connect()">Connect</button>
       <button onclick="disconnectWs()" disabled id="disconnectButton">
         Disconnect
@@ -91,6 +86,10 @@
       let isRecording = false;
       const TARGET_SAMPLE_RATE = 16000; // Gemini가 선호하는 샘플링 속도
 
+      let audioQueue = [];
+      let isPlayingFromQueue = false;
+      let outputAudioContext; // 오디오 출력용 AudioContext
+
       function logMessage(message, type) {
         const p = document.createElement('p');
         p.textContent = message;
@@ -118,7 +117,21 @@
         };
 
         websocket.onmessage = function (event) {
-          logMessage(`Received: ${event.data}`, 'received');
+          // logMessage(`Raw Received: ${event.data}`, 'system'); // 원시 데이터 로깅 (디버깅용)
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'status') {
+              logMessage(`Status: ${data.message}`, 'system');
+            } else if (data.type === 'audio_data') {
+              logMessage('Received audio data chunk from RPi.', 'system');
+              playAudioChunk(data.payload); // Base64 인코딩된 오디오 데이터 재생
+            } else {
+              logMessage(`Received Unknown JSON: ${event.data}`, 'received');
+            }
+          } catch (e) {
+            // JSON 파싱 실패 시 일반 텍스트로 간주 (이전 버전 호환 또는 순수 텍스트 상태 메시지)
+            logMessage(`Received Plain Text: ${event.data}`, 'received');
+          }
         };
 
         websocket.onclose = function (event) {
@@ -190,21 +203,30 @@
           });
           audioContext = new (window.AudioContext || window.webkitAudioContext)(
             {
-              sampleRate: TARGET_SAMPLE_RATE, // 여기서 샘플링 속도 지정 시도
+              sampleRate: TARGET_SAMPLE_RATE,
             }
           );
 
+          // 실제 AudioContext의 샘플링 속도 확인 (디버깅용)
+          logMessage(
+            `AudioContext sample rate: ${audioContext.sampleRate}`,
+            'system'
+          );
+          if (audioContext.sampleRate !== TARGET_SAMPLE_RATE) {
+            logMessage(
+              `Warning: Actual sample rate ${audioContext.sampleRate}Hz differs from target ${TARGET_SAMPLE_RATE}Hz. Gemini will resample.`,
+              'system'
+            );
+          }
+
           mediaStreamSource = audioContext.createMediaStreamSource(stream);
 
-          // 버퍼 크기: 4096 샘플. 16000Hz에서 약 0.25초마다 데이터 전송
-          // 실제 브라우저가 지원하는 AudioContext의 sampleRate에 따라 scriptProcessor가 동작하므로,
-          // TARGET_SAMPLE_RATE로 정확히 맞추기 어려울 수 있음. 서버측에서 resampling 필요할 수 있음.
           const bufferSize = 4096;
           scriptProcessor = audioContext.createScriptProcessor(
             bufferSize,
-            1,
-            1
-          ); // 1 input channel, 1 output channel
+            1, // input channels
+            1 // output channels
+          );
 
           scriptProcessor.onaudioprocess = function (audioProcessingEvent) {
             if (
@@ -215,20 +237,33 @@
               return;
             }
             const inputBuffer = audioProcessingEvent.inputBuffer;
-            const pcmData = inputBuffer.getChannelData(0); // Float32Array
+            // 채널 0의 Float32 PCM 데이터 가져오기
+            const float32Data = inputBuffer.getChannelData(0);
 
-            // Float32Array를 ArrayBuffer로 직접 전송 (또는 Int16으로 변환 후 전송)
-            // 지금은 Float32Array의 ArrayBuffer를 그대로 전송. 서버에서 Base64 인코딩.
-            websocket.send(pcmData.buffer);
+            // Float32Array를 Int16Array로 변환
+            const int16Data = new Int16Array(float32Data.length);
+            for (let i = 0; i < float32Data.length; i++) {
+              const s = Math.max(-1, Math.min(1, float32Data[i])); // -1과 1 사이로 클리핑
+              int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7fff; // Int16으로 변환
+            }
+
+            // Int16Array의 ArrayBuffer를 전송
+            websocket.send(int16Data.buffer);
           };
 
           mediaStreamSource.connect(scriptProcessor);
-          scriptProcessor.connect(audioContext.destination); // 스피커로 출력되지 않도록 dummy connect 또는 connect하지 않아도 됨.
-          // 하지만 일부 브라우저는 connect 해야 onaudioprocess가 호출됨.
+          // scriptProcessor를 destination에 연결하지 않으면 일부 브라우저에서 onaudioprocess가 호출되지 않을 수 있음
+          // 하지만 소리를 내고 싶지 않으므로, 연결하더라도 gain을 0으로 설정한 GainNode를 통하게 하거나,
+          // 바로 destination에 연결 후 사용하지 않음. 여기서는 연결.
+          scriptProcessor.connect(audioContext.destination);
+
           isRecording = true;
           startRecordButton.disabled = true;
           stopRecordButton.disabled = false;
-          logMessage('Recording started. Sending audio chunks.', 'system');
+          logMessage(
+            'Recording started. Sending Int16 PCM audio chunks.',
+            'system'
+          );
         } catch (err) {
           logMessage(
             `Error starting recording: ${err.name} - ${err.message}`,
@@ -240,36 +275,105 @@
       }
 
       function stopRecording() {
-        if (!isRecording && !audioContext) return; // 이미 중지되었거나 시작되지 않음
+        if (!isRecording && !audioContext) return;
 
         logMessage('Stopping audio recording...', 'system');
-        isRecording = false;
+        isRecording = false; // 루프 중단 플래그
+
         if (mediaStreamSource) {
-          mediaStreamSource.disconnect();
           mediaStreamSource.mediaStream
             .getTracks()
-            .forEach((track) => track.stop()); // 중요: 스트림 트랙 중지
+            .forEach((track) => track.stop());
+          mediaStreamSource.disconnect();
+          mediaStreamSource = null;
         }
         if (scriptProcessor) {
           scriptProcessor.disconnect();
+          scriptProcessor.onaudioprocess = null; // 이벤트 핸들러 제거
+          scriptProcessor = null;
         }
         if (audioContext) {
-          audioContext
-            .close()
-            .catch((e) => console.error('Error closing AudioContext:', e)); // AudioContext 닫기
+          // AudioContext는 활성 소스가 없을 때 닫는 것이 좋음
+          if (audioContext.state !== 'closed') {
+            audioContext
+              .close()
+              .catch((e) => console.error('Error closing AudioContext:', e));
+          }
           audioContext = null;
         }
-        scriptProcessor = null;
-        mediaStreamSource = null;
 
         startRecordButton.disabled =
           websocket && websocket.readyState === WebSocket.OPEN ? false : true;
         stopRecordButton.disabled = true;
+
         if (websocket && websocket.readyState === WebSocket.OPEN) {
-          // RPi 서버에 오디오 스트림 종료 신호 전송 (선택적)
-          // websocket.send(JSON.stringify({type: "audio_stream_end"}));
+          // RPi 서버에 오디오 스트림 종료 신호 전송
+          websocket.send(JSON.stringify({ type: 'audio_stream_end' }));
+          logMessage(
+            'Recording stopped. Sent audio_stream_end signal.',
+            'system'
+          );
+        } else {
           logMessage('Recording stopped.', 'system');
         }
+      }
+
+      // Base64 오디오 청크를 디코딩하고 재생 큐에 추가하는 함수
+      function playAudioChunk(base64AudioString) {
+        try {
+          const binaryString = window.atob(base64AudioString);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          // Gemini는 24kHz, 16-bit PCM 오디오를 생성
+          // ArrayBuffer를 Float32Array로 변환 (Web Audio API는 Float32 사용)
+          // 각 샘플은 2바이트 (16비트) 이므로, Int16Array로 먼저 읽음
+          const pcm16Data = new Int16Array(bytes.buffer);
+          const float32Data = new Float32Array(pcm16Data.length);
+          for (let i = 0; i < pcm16Data.length; i++) {
+            float32Data[i] = pcm16Data[i] / 32768.0; // 정규화 (-1.0 ~ 1.0)
+          }
+          audioQueue.push(float32Data);
+          if (!isPlayingFromQueue) {
+            playNextInQueue();
+          }
+        } catch (e) {
+          logMessage(`Error processing audio chunk: ${e}`, 'error');
+          console.error('Error processing audio chunk: ', e);
+        }
+      }
+
+      async function playNextInQueue() {
+        if (audioQueue.length === 0) {
+          isPlayingFromQueue = false;
+          return;
+        }
+        isPlayingFromQueue = true;
+
+        if (!outputAudioContext || outputAudioContext.state === 'closed') {
+          outputAudioContext = new (window.AudioContext ||
+            window.webkitAudioContext)({ sampleRate: 24000 }); // Gemini 오디오 출력은 24kHz
+        }
+        // outputAudioContext가 suspended 상태일 수 있으므로 resume 시도
+        if (outputAudioContext.state === 'suspended') {
+          await outputAudioContext.resume();
+        }
+
+        const float32Data = audioQueue.shift();
+        const audioBuffer = outputAudioContext.createBuffer(
+          1, // numberOfChannels
+          float32Data.length, // length
+          outputAudioContext.sampleRate // sampleRate (24000 Hz)
+        );
+        audioBuffer.getChannelData(0).set(float32Data);
+
+        const source = outputAudioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(outputAudioContext.destination);
+        source.onended = playNextInQueue; // 다음 청크 재생 또는 큐 비우기
+        source.start();
       }
     </script>
   </body>

@@ -66,17 +66,17 @@ This document outlines the tasks required to build the Raspberry Pi based Real-t
 
 ### 3.1 Web Client: Audio Capture and Streaming to RPi
 
-    - [ ] Use Web Audio API (`navigator.mediaDevices.getUserMedia`, `AudioContext`, `ScriptProcessorNode` or `AudioWorkletNode`) in the browser JavaScript to capture microphone input.
-    - [ ] Process audio into PCM format (16-bit, 16kHz sample rate preferred by Gemini).
+    - [X] Use Web Audio API (`navigator.mediaDevices.getUserMedia`, `AudioContext`, `ScriptProcessorNode` or `AudioWorkletNode`) in the browser JavaScript to capture microphone input.
+    - [X] Process audio into PCM format (16-bit, 16kHz sample rate preferred by Gemini).
         - *Consider if resampling is needed on the client or if RPi can handle it.*
-    - [ ] Stream audio chunks (e.g., as ArrayBuffer or Blob) via WebSocket to the RPi WebSocket server.
+    - [X] Stream audio chunks (e.g., as ArrayBuffer or Blob) via WebSocket to the RPi WebSocket server.
     - *Reference: Web Audio API documentation. For client-side audio capture & processing concepts, see `gemini-web-dev/src/lib/audio-recorder.ts` and `gemini-web-dev/src/lib/worklets/audio-processing.ts`. For sending logic see `gemini-web-dev/src/components/control-tray/ControlTray.tsx`.*
 
 ### 3.2 RPi: Audio Forwarding (Web Client -> Gemini) (`main.py`)
 
-    - [ ] In `main.py` WebSocket handler, receive audio chunks from the web client.
-    - [ ] Convert received audio chunks to base64-encoded strings.
-    - [ ] Forward these audio chunks to the Gemini Live API using `BidiGenerateContentRealtimeInput` message, specifically the `audio` field within it (e.g., `{"audio": {"data": "base64string", "mimeType": "audio/pcm;rate=16000"}}`).
+    - [X] In `main.py` WebSocket handler, receive audio chunks from the web client.
+    - [X] Convert received audio chunks to base64-encoded strings.
+    - [X] Forward these audio chunks to the Gemini Live API using `BidiGenerateContentRealtimeInput` message, specifically the `audio` field within it (e.g., `{"audio": {"data": "base64string", "mimeType": "audio/pcm;rate=16000"}}`).
     - *Reference: `docs/gemini-live-api.md` (Sending Audio), `docs/google-websocket-api.md` (BidiGenerateContentRealtimeInput, Blob structure). Note: `gemini-live-api.md` uses `audio=types.Blob(...)` in Python SDK, adapt for raw WebSocket JSON.*
 
 ### 3.3 RPi: Audio Reception and Forwarding (Gemini -> Web Client) (`main.py`)
