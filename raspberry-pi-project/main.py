@@ -108,13 +108,13 @@ def setup_oled():
         display_draw_obj = ImageDraw.Draw(display_image_obj)
         
         try:
-            loaded_font = ImageFont.truetype("NanumGothicCoding.ttf", 16) # 폰트 크기 조절 가능
+            loaded_font = ImageFont.truetype("PixelOperator.ttf", 14) # 폰트 크기 14로 수정
         except IOError:
-            logging.warning("NanumGothicCoding.ttf not found. Using default font.")
+            logging.warning("PixelOperator.ttf not found. Using default font.")
             loaded_font = ImageFont.load_default()
         
         logging.info("OLED display initialized successfully.")
-        display_text_on_oled_impl("AI Ready!", max_lines=1) # 시작 메시지
+        display_text_on_oled_impl("AI Ready!", max_lines=1, line_height=16) # line_height도 조정
         return True
     except ValueError as e:
         logging.error(f"OLED I2C setup error (ValueError): {e}. Is I2C enabled and address 0x3C correct?")
@@ -243,7 +243,7 @@ def get_distance_from_obstacle_impl():
         return {"success": True, "message": f"Obstacle at {dist} cm.", "distance_cm": dist, "unit": "cm", "status": status}
     except Exception as e: return {"success": False, "message": f"Dist err: {e}", "distance_cm": -1}
 
-def display_text_on_oled_impl(text: str, max_lines: int = 4, line_height: int = 10):
+def display_text_on_oled_impl(text: str, max_lines: int = 4, line_height: int = 16):
     global display_draw_obj, display_image_obj, oled_display, loaded_font
     if not oled_display or not display_draw_obj or not display_image_obj or not loaded_font:
         logging.error("OLED not initialized, cannot display text.")
@@ -294,13 +294,6 @@ def display_text_on_oled_impl(text: str, max_lines: int = 4, line_height: int = 
         
         oled_display.image(display_image_obj)
         oled_display.show()
-        # 로그는 전체 텍스트의 마지막 부분 또는 처음 부분을 간략히 표시
-        log_text = text.strip()
-        if len(log_text) > 50:
-            logging.info(f"OLED display updated (last 50 chars): '{log_text[-50:].replace("\n", " ")}'")
-        elif log_text:
-            logging.info(f"OLED display updated: '{log_text.replace("\n", " ")}'")
-        # 빈 문자열일 때는 위에서 이미 로깅됨
         return {"success": True, "message": "Text updated on OLED."}
     except Exception as e: 
         error_msg = f"Error displaying on OLED: {e}"
@@ -570,7 +563,7 @@ async def gemini_processor():
                                     accumulated_transcription_for_oled += transcript_part
                                     logging.info(f"Received Output Transcription: {transcript_part}")
                                     # 실시간 트랜스크립션 청크를 OLED에 바로 표시
-                                    display_text_on_oled_impl(accumulated_transcription_for_oled)
+                                    display_text_on_oled_impl(accumulated_transcription_for_oled, line_height=16)
                                     
                                     # 웹 클라이언트에게도 트랜스크립션 조각 전송 (선택적)
                                     if message_for_web is None: # 오디오 데이터가 없는 경우 (예: 텍스트 응답만)
@@ -638,7 +631,7 @@ async def gemini_processor():
                                             text_to_display = fc_args.get("text")
                                             if text_to_display is not None:
                                                 logging.info(f"Executing tool: display_on_oled(text='{text_to_display[:20]}...')")
-                                                tool_call_result = display_text_on_oled_impl(text_to_display)
+                                                tool_call_result = display_text_on_oled_impl(text_to_display, line_height=16)
                                             else:
                                                 tool_call_result = {"success": False, "message": "Missing text for OLED."}
                                         else:
