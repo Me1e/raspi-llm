@@ -22,8 +22,8 @@ YELLOW_LED_PIN = 27
 RED_LED_PIN = 22
 WHITE_LED_PIN = 10 # 흰색 LED 핀 추가
 SERVO_PIN = 18 # 서보모터 GPIO 핀
-# TRIG_PIN = 23 # 추후 초음파센서용
-# ECHO_PIN = 24 # 추후 초음파센서용
+TRIG_PIN = 23 # 초음파 센서 Trig 핀
+ECHO_PIN = 24 # 초음파 센서 Echo 핀
 
 led_pins = {
     "green": GREEN_LED_PIN,
@@ -54,7 +54,14 @@ def setup_gpio():
     current_servo_angle = 90 # 초기 각도 설정
     set_servo_angle_absolute(current_servo_angle) # 실제 모터 이동
 
-    logging.info("GPIO setup complete for LEDs and Servo.")
+    GPIO.setup(TRIG_PIN, GPIO.OUT)
+    GPIO.setup(ECHO_PIN, GPIO.IN)
+    GPIO.output(TRIG_PIN, False) # 초기 Trig 핀은 LOW 상태
+
+    logging.info("GPIO setup complete for LEDs, Servo, and Ultrasonic sensor.")
+    logging.info("Waiting for ultrasonic sensor to settle...")
+    time.sleep(2) # 센서 안정화 시간
+    logging.info("Ultrasonic sensor settled.")
 
 def cleanup_gpio():
     if servo_motor:
@@ -148,6 +155,48 @@ def rotate_servo_impl(degrees: int, direction: str = None):
         target_angle = degrees
         
     return set_servo_angle_absolute(target_angle)
+
+def get_distance_from_obstacle_impl():
+    """초음파 센서를 사용하여 거리를 측정하고 cm 단위로 반환합니다."""
+    try:
+        GPIO.output(TRIG_PIN, True)   # Trig 핀에 10us 동안 HIGH 신호 출력
+        time.sleep(0.00001)          # 10 마이크로초
+        GPIO.output(TRIG_PIN, False)
+
+        pulse_start_time = time.time()
+        pulse_end_time = time.time()
+
+        # Echo 핀이 HIGH로 변경될 때까지 시작 시간 업데이트 (타임아웃 추가 권장)
+        timeout_start = time.time()
+        while GPIO.input(ECHO_PIN) == 0:
+            pulse_start_time = time.time()
+            if pulse_start_time - timeout_start > 1: # 1초 타임아웃
+                logging.warning("Ultrasonic sensor timeout (echo never went high).")
+                return {"success": False, "message": "Ultrasonic sensor timeout (echo never went high).", "distance_cm": -1}
+
+        # Echo 핀이 LOW로 변경될 때까지 종료 시간 업데이트 (타임아웃 추가 권장)
+        timeout_echo = time.time()
+        while GPIO.input(ECHO_PIN) == 1:
+            pulse_end_time = time.time()
+            if pulse_end_time - timeout_echo > 1: # 1초 타임아웃
+                logging.warning("Ultrasonic sensor timeout (echo never went low).")
+                return {"success": False, "message": "Ultrasonic sensor timeout (echo never went low).", "distance_cm": -1}
+            
+        pulse_duration = pulse_end_time - pulse_start_time
+        distance = pulse_duration * 34300 / 2  # 음속: 34300 cm/s
+        distance = round(distance, 2)
+
+        if distance > 400 or distance < 2: # 센서 측정 범위 초과/미달 시
+            logging.info(f"Distance out of range: {distance} cm. Reporting as 'out of range'.")
+            return {"success": True, "message": f"Measured distance: {distance} cm (possibly out of effective range).", "distance_cm": distance, "status": "out_of_range"}
+        else:
+            logging.info(f"Measured distance: {distance} cm.")
+            return {"success": True, "message": f"Distance to obstacle is {distance} cm.", "distance_cm": distance, "unit": "cm"}
+
+    except Exception as e:
+        error_msg = f"Error measuring distance: {e}"
+        logging.error(error_msg)
+        return {"success": False, "message": error_msg, "distance_cm": -1}
 
 async def setup_camera():
     global picam2
@@ -274,6 +323,15 @@ servo_tool_schema = {
     }
 }
 
+ultrasonic_tool_schema = {
+    "name": "get_distance_from_obstacle",
+    "description": "Measures the distance to the nearest obstacle in front of the sensor and returns the distance in centimeters.",
+    "parameters": { # 파라미터 없음
+        "type": "OBJECT",
+        "properties": {}
+    }
+}
+
 async def gemini_processor():
     global gemini_websocket_connection
     if GEMINI_API_KEY == "YOUR_API_KEY_HERE":
@@ -291,7 +349,7 @@ async def gemini_processor():
 
                 # Task 5.3: Function Calling 설정 추가
                 tools_config = [
-                    {"functionDeclarations": [led_tool_schema, servo_tool_schema]} # LED 제어 도구 추가
+                    {"functionDeclarations": [led_tool_schema, servo_tool_schema, ultrasonic_tool_schema]} # LED 제어 도구 추가
                     # 추후 다른 도구들 여기에 추가 (예: Servo, OLED, Ultrasonic)
                 ]
 
@@ -441,6 +499,9 @@ async def gemini_processor():
                                                 tool_call_result = rotate_servo_impl(degrees, direction)
                                             else:
                                                 tool_call_result = {"success": False, "message": "Missing degrees argument for rotate_servo."}
+                                        elif fc_name == "get_distance_from_obstacle": # 초음파 센서 함수 호출
+                                            logging.info("Executing tool call: get_distance_from_obstacle()")
+                                            tool_call_result = get_distance_from_obstacle_impl()
                                         else:
                                             logging.warning(f"Unknown function call name: {fc_name}")
                                             tool_call_result = {"success": False, "message": f"Unknown function: {fc_name}"}
