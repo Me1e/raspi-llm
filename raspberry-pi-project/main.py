@@ -243,7 +243,7 @@ def get_distance_from_obstacle_impl():
         return {"success": True, "message": f"Obstacle at {dist} cm.", "distance_cm": dist, "unit": "cm", "status": status}
     except Exception as e: return {"success": False, "message": f"Dist err: {e}", "distance_cm": -1}
 
-def display_text_on_oled_impl(text: str, max_lines: int = 4, line_height: int = 16):
+def display_text_on_oled_impl(text: str, max_lines: int = 4, line_height: int = 14):
     global display_draw_obj, display_image_obj, oled_display, loaded_font
     if not oled_display or not display_draw_obj or not display_image_obj or not loaded_font:
         logging.error("OLED not initialized, cannot display text.")
@@ -468,8 +468,8 @@ async def gemini_processor():
 
                 # Task 5.3: Function Calling 설정 추가
                 tools_config = [
-                    {"functionDeclarations": [led_tool_schema, servo_tool_schema, ultrasonic_tool_schema, oled_tool_schema]} # LED 제어 도구 추가
-                    # 추후 다른 도구들 여기에 추가 (예: Servo, OLED, Ultrasonic)
+                    {"functionDeclarations": [led_tool_schema, servo_tool_schema, ultrasonic_tool_schema, oled_tool_schema]},
+                    {"googleSearch": {}} # Google Search 도구 추가
                 ]
 
                 setup_message = {
@@ -478,11 +478,19 @@ async def gemini_processor():
                         "generationConfig": {
                             "responseModalities": ["AUDIO"], # 오디오 응답 요청으로 변경
                         },
+                        "outputAudioConfig": { # "Leda" 음성 설정을 위해 추가
+                            "synthesizeSpeechConfig": {
+                                "voice": {
+                                    "name": "Leda"
+                                    # API 문서에 따라 필요하다면 "gender" 등의 추가 파라미터 고려 가능
+                                }
+                            }
+                        },
                         "outputAudioTranscription": {}, # 최상위 setup 객체 내로 이동
                         "systemInstruction": {
-                            "parts": [{"text": "You are a friendly and helpful Raspberry Pi assistant. You can control LEDs of colors green, yellow, red, and white, and a servo motor."}] # 흰색 LED 제어 가능 명시
+                            "parts": [{"text": "You are a friendly and helpful Raspberry Pi assistant. Answer as succinctly and quickly as possible by only answering what is needed."}]
                         },
-                        "tools": tools_config # 정의된 도구 설정 추가
+                        "tools": tools_config # 정의된 도구 설정 추가 (이제 Google Search 포함)
                     }
                 }
                 await gemini_ws.send(json.dumps(setup_message))
@@ -563,7 +571,7 @@ async def gemini_processor():
                                     accumulated_transcription_for_oled += transcript_part
                                     logging.info(f"Received Output Transcription: {transcript_part}")
                                     # 실시간 트랜스크립션 청크를 OLED에 바로 표시
-                                    display_text_on_oled_impl(accumulated_transcription_for_oled, line_height=16)
+                                    display_text_on_oled_impl(accumulated_transcription_for_oled, line_height=14)
                                     
                                     # 웹 클라이언트에게도 트랜스크립션 조각 전송 (선택적)
                                     if message_for_web is None: # 오디오 데이터가 없는 경우 (예: 텍스트 응답만)
@@ -631,7 +639,7 @@ async def gemini_processor():
                                             text_to_display = fc_args.get("text")
                                             if text_to_display is not None:
                                                 logging.info(f"Executing tool: display_on_oled(text='{text_to_display[:20]}...')")
-                                                tool_call_result = display_text_on_oled_impl(text_to_display, line_height=16)
+                                                tool_call_result = display_text_on_oled_impl(text_to_display, line_height=14)
                                             else:
                                                 tool_call_result = {"success": False, "message": "Missing text for OLED."}
                                         else:
