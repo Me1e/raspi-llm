@@ -220,7 +220,7 @@ def get_distance_from_obstacle_impl():
     try:
         # Ensure Trig is low for a short period before sending a pulse
         GPIO.output(TRIG_PIN, False)
-        time.sleep(0.01) # Settle time before measurement
+        time.sleep(0.005) # Settle time before measurement
 
         GPIO.output(TRIG_PIN, True); time.sleep(0.00001); GPIO.output(TRIG_PIN, False)
         start_t, end_t = time.time(), time.time()
@@ -438,7 +438,7 @@ oled_tool_schema = {
 }
 
 async def gemini_processor():
-    global gemini_websocket_connection, accumulated_transcription, last_transcription_time
+    global gemini_websocket_connection, accumulated_transcription_for_oled
     if GEMINI_API_KEY == "YOUR_API_KEY_HERE":
         logging.error("Gemini API Key is not set. Please update GEMINI_API_KEY in main.py.")
         await gemini_to_web_queue.put(json.dumps({"type": "status", "message": "Error: Gemini API Key not configured on the server."}))
@@ -489,8 +489,7 @@ async def gemini_processor():
                 logging.info("Gemini session setup complete.")
                 await gemini_to_web_queue.put(json.dumps({"type": "status", "message": "[Gemini session ready]"}))
 
-                accumulated_transcription = "" # 새 세션 시작 시 트랜스크립션 초기화
-                last_transcription_time = time.time()
+                accumulated_transcription_for_oled = "" # 새 세션 시작 시 트랜스크립션 초기화
 
                 async def forward_text_to_gemini():
                     while True:
@@ -545,16 +544,17 @@ async def gemini_processor():
                                 
                                 # 텍스트 트랜스크립션 처리 (outputAudioTranscription)
                                 if "outputTranscription" in server_content and server_content["outputTranscription"].get("text"):
-                                    transcript = server_content["outputTranscription"]["text"]
-                                    accumulated_transcription += transcript
-                                    last_transcription_time = time.time()
-                                    logging.info(f"Received Output Transcription: {transcript}")
-                                    # 오디오 데이터와 트랜스크립션을 별도 메시지로 보낼지, 합칠지 결정 필요.
-                                    # 여기서는 별도 상태 메시지로 전송.
+                                    transcript_part = server_content["outputTranscription"]["text"]
+                                    accumulated_transcription_for_oled += transcript_part
+                                    logging.info(f"Received Output Transcription: {transcript_part}")
+                                    # 실시간 트랜스크립션 청크를 OLED에 바로 표시
+                                    display_text_on_oled_impl(accumulated_transcription_for_oled)
+                                    
+                                    # 웹 클라이언트에게도 트랜스크립션 조각 전송 (선택적)
                                     if message_for_web is None: # 오디오 데이터가 없는 경우 (예: 텍스트 응답만)
-                                         message_for_web = {"type": "status", "message": f"[Transcript]: {transcript}"}
+                                         message_for_web = {"type": "status", "message": f"[T]: {transcript_part}"}
                                     else: # 오디오 데이터가 이미 있다면, 트랜스크립션은 별도 메시지로.
-                                        await gemini_to_web_queue.put(json.dumps({"type": "status", "message": f"[Transcript]: {transcript}"}))
+                                        await gemini_to_web_queue.put(json.dumps({"type": "status", "message": f"[T]: {transcript_part}"}))
 
 
                                 # 텍스트 응답 (예: responseModalities가 TEXT일 때 또는 오류 메시지)
