@@ -108,9 +108,9 @@ def setup_oled():
         display_draw_obj = ImageDraw.Draw(display_image_obj)
         
         try:
-            loaded_font = ImageFont.truetype("PixelOperator.ttf", 14) # 폰트 크기 14로 수정
+            loaded_font = ImageFont.truetype("NanumGothicCoding.ttf", 14) # 폰트 크기 14로 수정
         except IOError:
-            logging.warning("PixelOperator.ttf not found. Using default font.")
+            logging.warning("NanumGothicCoding.ttf not found. Using default font.")
             loaded_font = ImageFont.load_default()
         
         logging.info("OLED display initialized successfully.")
