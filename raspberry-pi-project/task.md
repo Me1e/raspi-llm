@@ -81,24 +81,22 @@ This document outlines the tasks required to build the Raspberry Pi based Real-t
 
 ### 3.3 RPi: Audio Reception and Forwarding (Gemini -> Web Client) (`main.py`)
 
-    - [ ] In `main.py`, handle `BidiGenerateContentServerContent` messages from Gemini.
-    - [ ] Check `modelTurn.parts` for parts with `inlineData.mimeType` starting with `audio/pcm`.
-    - [ ] Extract the base64 audio data from `inlineData.data`.
-    - [ ] Send this base64 audio data (or raw bytes if preferred by client) back to the connected web client via the RPi WebSocket server.
+    - [X] In `main.py`, handle `BidiGenerateContentServerContent` messages from Gemini that contain audio data (`modelTurn.parts` with `inlineData.mimeType` starting with `audio/pcm`).
+    - [X] Decode Base64 audio data from Gemini if needed.
+    - [X] Stream these audio chunks (wrapped in JSON like `{"type": "audio_data", "payload": "..."}`) back to the connected web client via the RPi WebSocket server.
     - *Reference: `docs/gemini-live-api.md` (Receiving Audio). For handling incoming audio events, see concepts in `gemini-web-dev/src/hooks/use-live-api.ts` (onAudio handler).*
 
 ### 3.4 Web Client: Audio Playback
 
-    - [ ] Receive audio chunks (base64 or raw bytes) from the RPi WebSocket server.
-    - [ ] Decode base64 if necessary.
-    - [ ] Use Web Audio API (`AudioContext`, `AudioBufferSourceNode`) to play back the received audio chunks in the browser.
+    - [X] Receive audio chunks (JSON wrapped with `type: "audio_data"`) from the RPi WebSocket server.
+    - [X] Decode base64 audio data from the payload.
+    - [X] Convert 16-bit PCM (24kHz) to Float32Array and use Web Audio API to play back the received audio chunks in the browser.
     - *Reference: Web Audio API documentation. For playback concepts, see `gemini-web-dev/src/lib/audio-streamer.ts`.*
 
 ### 3.5 Audio Transcription (Optional, for Debugging/Display)
 
-    - [ ] If `responseModalities` is `["AUDIO"]`, configure `outputAudioTranscription: {}` in `BidiGenerateContentSetup`.
-    - [ ] If sending audio from client to Gemini, configure `inputAudioTranscription: {}`.
-    - [ ] Handle `inputTranscription` and `outputTranscription` fields in `BidiGenerateContentServerContent` messages from Gemini and display them on the web client.
+    - [X] Configure `outputAudioTranscription` and/or `inputAudioTranscription` in `BidiGenerateContentSetup`.
+    - [X] Handle transcription messages from Gemini and display them on the web client (e.g., as `{"type": "status", "message": "[Transcript]: ..."}`).
     - *Reference: `docs/gemini-live-api.md` (Audio Transcriptions), `docs/google-websocket-api.md` (AudioTranscriptionConfig, BidiGenerateContentServerContent).*
 
 ## Phase 4: Real-time Video Streaming (RPi Camera -> Gemini)

@@ -6,6 +6,9 @@ import logging
 import json
 import base64 # 오디오 데이터 Base64 인코딩용
 from websockets.connection import State # State 임포트 추가
+from picamera2 import Picamera2 # picamera2 임포트
+import io # 이미지 스트림 처리를 위해
+import time # 프레임 간격 제어를 위해
 
 # 기본 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +27,95 @@ gemini_to_web_queue = asyncio.Queue() # 웹 클라이언트로 보낼 메시지 
 connected_web_clients = set()
 gemini_websocket_connection = None
 
+# --- 카메라 설정 ---
+picam2 = None
+VIDEO_FPS = 1 # 초당 전송할 프레임 수 (조절 가능)
+# ------------------
+
+async def setup_camera():
+    global picam2
+    if picam2 is not None: # 이미 초기화 및 실행 중이면 반환
+        try: # 간단한 상태 확인 시도
+            picam2.capture_metadata()
+            return True
+        except Exception:
+            logging.warning("Camera was initialized but seems unresponsive. Re-initializing.")
+            try:
+                picam2.close()
+            except Exception:
+                pass # 이미 닫혔거나 문제 있는 상태일 수 있음
+            picam2 = None
+
+    try:
+        logging.info("Initializing camera...")
+        picam2 = Picamera2()
+        capture_config = picam2.create_still_configuration(main={"size": (640, 480)}) 
+        picam2.configure(capture_config)
+        picam2.start()
+        logging.info("Camera setup successful and started.")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to setup or start camera: {e}")
+        if picam2: # 부분적으로라도 초기화 되었다면 close 시도
+            try:
+                picam2.close()
+            except Exception as ce_close:
+                logging.error(f"Error closing camera during setup failure: {ce_close}")
+        picam2 = None
+        return False
+
+async def stream_video_to_gemini():
+    global gemini_websocket_connection, picam2
+    
+    # 앱 시작 시 카메라 설정 시도
+    if not await setup_camera():
+        logging.error("Initial camera setup failed. Video streaming will not start immediately.")
+
+    while True:
+        await asyncio.sleep(1.0 / VIDEO_FPS) 
+        
+        if picam2 is None or not picam2.started: # 카메라가 없거나 시작되지 않았다면 설정 시도
+            logging.warning("Camera not running. Attempting to set up camera for video stream...")
+            if not await setup_camera():
+                logging.warning("Retrying camera setup in 5 seconds for video stream...")
+                await asyncio.sleep(5) 
+                continue # 다음 루프에서 다시 시도
+        
+        if gemini_websocket_connection and gemini_websocket_connection.state == State.OPEN and picam2 and picam2.started:
+            try:
+                buffer = io.BytesIO()
+                picam2.capture_file(buffer, format='jpeg') # 기본 품질 사용
+                buffer.seek(0)
+                image_bytes = buffer.read()
+                
+                if not image_bytes:
+                    logging.warning("Captured empty image, skipping frame.")
+                    continue
+
+                image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+                
+                gemini_video_input = {
+                    "realtimeInput": {
+                        "video": {"data": image_base64, "mimeType": "image/jpeg"}
+                    }
+                }
+                await gemini_websocket_connection.send(json.dumps(gemini_video_input))
+                logging.debug(f"Sent video frame to Gemini ({len(image_bytes)} bytes).")
+
+            except Exception as e:
+                logging.error(f"Error capturing or sending video frame: {e}")
+                if isinstance(e, RuntimeError) and ("Camera not running" in str(e) or "No data available" in str(e)):
+                    logging.info("Camera seems to have stopped. Attempting to re-initialize camera...")
+                    if picam2:
+                        try: picam2.close()
+                        except Exception: pass
+                    picam2 = None # 재설정 강제
+                    await asyncio.sleep(1) # 짧은 지연 후 재시도
+                else:
+                    await asyncio.sleep(2) # 다른 일반적인 오류의 경우 잠시 대기 후 재시도
+        else:
+            logging.debug("Gemini not connected or camera not ready. Skipping video frame.")
+            await asyncio.sleep(1) # 대기
 
 async def gemini_processor():
     global gemini_websocket_connection
@@ -277,6 +369,7 @@ async def start_main_server():
 
     asyncio.create_task(gemini_processor())
     asyncio.create_task(broadcast_gemini_responses())
+    asyncio.create_task(stream_video_to_gemini()) # 비디오 스트리밍 태스크 추가
 
     async with websockets.serve(rpi_websocket_handler, server_host, server_port):
         await asyncio.Future()  
