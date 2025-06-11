@@ -521,6 +521,7 @@ async def gemini_processor():
 
 
                 async def receive_from_gemini():
+                    global accumulated_transcription_for_oled
                     while True:
                         if not gemini_websocket_connection: break
                         try:
