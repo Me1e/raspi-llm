@@ -52,6 +52,9 @@ display_draw_obj = None
 display_image_obj = None
 loaded_font = None
 
+
+user_audio_session_active = False  # 사용자 오디오 세션 추적용
+
 def setup_gpio():
     global servo_motor, current_servo_angle
     GPIO.setmode(GPIO.BCM) # BCM 핀 번호 사용
@@ -660,7 +663,7 @@ async def gemini_processor():
                         },
                         "outputAudioTranscription": {},
                         "systemInstruction": {
-                            "parts": [{"text": "You are a friendly and helpful Raspberry Pi assistant. Answer as succinctly and quickly as possible by only answering what is needed."}]
+                            "parts": [{"text": "당신은 라즈베리파이 어시스턴트입니다. 무조건 한국어로만 답변하세요. 최대한 짧고 간결하게 답변하세요. 숫자, 거리, 각도 등은 모두 한글로 읽으세요. 예: '46cm'는 '사십육 센티미터', '90도'는 '구십도', '3.5초'는 '삼점오 초'로 말하세요."}]
                         },
                         "tools": tools_config
                     }
@@ -742,8 +745,8 @@ async def gemini_processor():
                                 if "outputTranscription" in server_content and server_content["outputTranscription"].get("text"):
                                     transcript_part = server_content["outputTranscription"]["text"]
                                     
-                                    # turnComplete이 있거나 새로운 응답이 시작될 때 이전 텍스트 초기화
-                                    if server_content.get("turnComplete") or (transcript_part.strip() and len(accumulated_transcription_for_oled) > 200):
+                                    # turnComplete이 있거나 텍스트가 너무 길어질 때 초기화 (사용자 세션 시작은 별도 처리됨)
+                                    if server_content.get("turnComplete") or len(accumulated_transcription_for_oled) > 200:
                                         accumulated_transcription_for_oled = ""
                                     
                                     accumulated_transcription_for_oled += transcript_part
@@ -781,7 +784,9 @@ async def gemini_processor():
                                     if message_for_web is None: message_for_web = {"type": "status", "message": "[Gemini: Interrupted]"}
                                 
                                 if "turnComplete" in server_content and server_content["turnComplete"]:
+                                    global user_audio_session_active
                                     logging.info("Gemini: Turn complete.")
+                                    user_audio_session_active = False  # Gemini 턴 완료 시 사용자 세션도 리셋
                                     # 턴 완료 메시지는 별도로 보내거나, 마지막 데이터에 포함시킬 수 있음
                                     # 여기서는 별도 상태 메시지로 전송하지 않음 (오디오 스트림의 끝으로 간주)
 
@@ -915,7 +920,9 @@ async def rpi_websocket_handler(websocket, path=None):
                 try:
                     data = json.loads(message_from_web)
                     if data.get("type") == "audio_stream_end":
+                        global user_audio_session_active
                         logging.info(f"Received audio_stream_end signal from {websocket.remote_address}")
+                        user_audio_session_active = False  # 오디오 세션 종료
                         if gemini_websocket_connection and gemini_websocket_connection.state == State.OPEN:
                             end_signal_message = {"realtimeInput": {"audioStreamEnd": True}}
                             await gemini_websocket_connection.send(json.dumps(end_signal_message))
@@ -930,7 +937,17 @@ async def rpi_websocket_handler(websocket, path=None):
                     await web_text_to_gemini_queue.put(message_from_web)
                 
             elif isinstance(message_from_web, bytes): 
+                global user_audio_session_active, accumulated_transcription_for_oled
                 logging.info(f"Received AUDIO ({len(message_from_web)} bytes) from web client {websocket.remote_address}")
+                
+                # 사용자가 새로운 오디오 세션을 시작할 때 OLED 초기화
+                if not user_audio_session_active:
+                    user_audio_session_active = True
+                    accumulated_transcription_for_oled = ""  # 이전 텍스트 초기화
+                    # OLED 화면 즉시 클리어
+                    asyncio.create_task(asyncio.to_thread(display_text_on_oled_impl, "", 4, 14))
+                    logging.info("User started speaking - OLED cleared for new session")
+                
                 if gemini_websocket_connection and gemini_websocket_connection.state == State.OPEN:
                     try:
                         audio_base64 = base64.b64encode(message_from_web).decode('utf-8')
