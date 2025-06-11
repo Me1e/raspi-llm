@@ -130,7 +130,7 @@ _This phase focuses on enabling Gemini to control connected hardware components 
         - `display_on_oled(text: string)`
     - [X] **Ultrasonic Sensor Reading:**
         - `get_distance_from_obstacle()`
-    - [ ] **Buzzer Melody Playback:**
+    - [X] **Buzzer Melody Playback:** (Implemented in main.py)
         - `play_melody(notes: list_of_objects)`: Plays a sequence of musical notes. Each note object should contain `frequency` (Hz) and `duration` (ms).
 
 ### 5.2 Implement Hardware Control Functions in Python
@@ -141,14 +141,14 @@ _This phase focuses on enabling Gemini to control connected hardware components 
     - [X] **Servo Motor Control Functions:** (`rotate_servo_impl`)
     - [X] **OLED Display Functions:** (`display_on_oled_impl`)
     - [X] **Ultrasonic Sensor Functions:** (`get_distance_from_obstacle_impl`)
-    - [ ] **Buzzer Melody Playback Function:**
+    - [X] **Buzzer Melody Playback Function:** (Implemented in main.py)
         - Implement `play_melody_impl(notes)` in `main.py` using PWM to control the buzzer for specified frequencies and durations.
     - [X] **Ensure proper `GPIO.cleanup()` on program exit.** (Includes buzzer pin consideration)
 
 ### 5.3 Configure Function Calling in Gemini Session Setup
 
     - [X] Create `Tool` objects containing `functionDeclarations` for LED, Servo, Ultrasonic, and OLED control schemas.
-    - [ ] Add `play_melody` function schema to the `Tool` objects in `main.py`'s `gemini_processor` setup message.
+    - [X] Add `play_melody` function schema to the `Tool` objects in `main.py`'s `gemini_processor` setup message. (Implemented in main.py)
     - *Reference: `docs/function-call-api.md`, `docs/gemini-live-api.md` (Function Calling example).*
 
 ### 5.4 Handle Tool Calls from Gemini
@@ -156,7 +156,7 @@ _This phase focuses on enabling Gemini to control connected hardware components 
     - [X] In `main.py`'s `receive_from_gemini` (or tool call handler):
         - Listen for `BidiGenerateContentToolCall` messages.
         - Parse `functionCalls` for existing hardware.
-    - [ ] Add logic to parse and handle `functionCall` for `play_melody`:
+    - [X] Add logic to parse and handle `functionCall` for `play_melody`: (Implemented in main.py)
         - Identify the function `name` as `play_melody`.
         - Extract `notes` argument.
         - Asynchronously execute `play_melody_impl(notes)`.
@@ -165,10 +165,10 @@ _This phase focuses on enabling Gemini to control connected hardware components 
 ### 5.5 Send Tool Responses to Gemini
 
     - [X] After existing hardware control functions execute, prepare and send `FunctionResponse` objects.
-    - [ ] After `play_melody_impl` executes:
+    - [X] After `play_melody_impl` executes: (Implemented in main.py)
         - Prepare a `FunctionResponse` object (using `id` from original call, `name` as `play_melody`).
         - Populate `response.output` with success/failure status.
-    - [ ] Send this `FunctionResponse` back to Gemini.
+    - [X] Send this `FunctionResponse` back to Gemini.
     - *Reference: `docs/google-websocket-api.md` (BidiGenerateContentToolResponse, FunctionResponse structure).*
 
 ## Phase 6: Sensor Integration and OLED Display (Refined based on new requirements)

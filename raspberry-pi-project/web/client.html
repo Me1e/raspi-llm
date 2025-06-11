@@ -86,9 +86,9 @@
       let isRecording = false;
       const TARGET_SAMPLE_RATE = 16000; // Gemini가 선호하는 샘플링 속도
 
-      let audioQueue = [];
+      let outputAudioContext = null; // Gemini 오디오 출력용
+      let audioQueue = []; // 재생할 오디오 청크들의 큐
       let isPlayingFromQueue = false;
-      let outputAudioContext; // 오디오 출력용 AudioContext
 
       function logMessage(message, type) {
         const p = document.createElement('p');
@@ -96,6 +96,26 @@
         p.className = 'message ' + type;
         messagesDiv.appendChild(p);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      }
+
+      // AudioContext 미리 초기화
+      async function initializeAudioContext() {
+        if (!outputAudioContext || outputAudioContext.state === 'closed') {
+          outputAudioContext = new (window.AudioContext ||
+            window.webkitAudioContext)({ sampleRate: 24000 });
+          logMessage(
+            'Audio context initialized (24kHz for Gemini output)',
+            'system'
+          );
+        }
+        if (outputAudioContext.state === 'suspended') {
+          try {
+            await outputAudioContext.resume();
+            logMessage('Audio context resumed', 'system');
+          } catch (e) {
+            logMessage(`Failed to resume audio context: ${e}`, 'error');
+          }
+        }
       }
 
       function connect() {
@@ -115,12 +135,8 @@
           sendTextButton.disabled = false;
           startRecordButton.disabled = false;
 
-          // AudioContext를 미리 초기화 (사용자 인터랙션이 있었으므로 가능)
-          if (!outputAudioContext || outputAudioContext.state === 'closed') {
-            outputAudioContext = new (window.AudioContext ||
-              window.webkitAudioContext)({ sampleRate: 24000 });
-            logMessage('Audio output context initialized.', 'system');
-          }
+          // 연결 시 오디오 컨텍스트 미리 초기화
+          initializeAudioContext();
         };
 
         websocket.onmessage = function (event) {
@@ -205,6 +221,9 @@
           );
           return;
         }
+
+        // 녹음 시작 시 출력 AudioContext도 활성화 (사용자 상호작용 활용)
+        await initializeAudioContext();
 
         logMessage('Starting audio recording...', 'system');
         try {
@@ -362,11 +381,10 @@
         }
         isPlayingFromQueue = true;
 
+        // AudioContext가 준비되지 않았다면 초기화
         if (!outputAudioContext || outputAudioContext.state === 'closed') {
-          outputAudioContext = new (window.AudioContext ||
-            window.webkitAudioContext)({ sampleRate: 24000 }); // Gemini 오디오 출력은 24kHz
+          await initializeAudioContext();
         }
-        // outputAudioContext가 suspended 상태일 수 있으므로 resume 시도
         if (outputAudioContext.state === 'suspended') {
           await outputAudioContext.resume();
         }
@@ -383,17 +401,18 @@
         source.buffer = audioBuffer;
         source.connect(outputAudioContext.destination);
         source.onended = function () {
-          // 다음 청크가 있으면 즉시 재생, 없으면 짧은 지연 후 재시도
+          // 다음 청크 즉시 재생
           if (audioQueue.length > 0) {
             playNextInQueue();
           } else {
+            // 짧은 지연 후 재시도 (새로운 청크 대기)
             setTimeout(() => {
               if (audioQueue.length > 0) {
                 playNextInQueue();
               } else {
                 isPlayingFromQueue = false;
               }
-            }, 10); // 10ms 후 재시도
+            }, 5); // 5ms로 단축
           }
         };
         source.start();

@@ -513,9 +513,6 @@ async def gemini_processor():
                         "model": f"models/{GEMINI_MODEL_NAME}",
                         "generationConfig": {
                             "responseModalities": ["AUDIO"],
-                            # "speechConfig": {
-                            #     "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Leda"}}
-                            # }
                         },
                         "outputAudioTranscription": {},
                         "systemInstruction": {
@@ -592,11 +589,12 @@ async def gemini_processor():
                                     for part in server_content["modelTurn"]["parts"]:
                                         if "inlineData" in part and part["inlineData"].get("mimeType", "").startswith("audio/pcm"):
                                             audio_base64 = part["inlineData"]["data"]
-                                            logging.info(f"Received AUDIO data from Gemini (approx {len(audio_base64)*3/4} bytes of PCM).")
+                                            logging.info(f"[{time.time():.3f}] AUDIO CHUNK: Received from Gemini (approx {len(audio_base64)*3/4} bytes of PCM). Sending to web immediately.")
                                             message_for_web = {"type": "audio_data", "payload": audio_base64}
                                     # 오디오와 함께 트랜스크립션이 올 수도 있으므로, 계속 다른 part도 확인
                                 
                                 # 텍스트 트랜스크립션 처리 (outputAudioTranscription)
+                                transcription_message = None
                                 if "outputTranscription" in server_content and server_content["outputTranscription"].get("text"):
                                     transcript_part = server_content["outputTranscription"]["text"]
                                     
@@ -605,15 +603,16 @@ async def gemini_processor():
                                         accumulated_transcription_for_oled = ""
                                     
                                     accumulated_transcription_for_oled += transcript_part
-                                    logging.info(f"Received Output Transcription: {transcript_part}")
-                                    # 실시간 트랜스크립션 청크를 OLED에 바로 표시
-                                    display_text_on_oled_impl(accumulated_transcription_for_oled, line_height=14)
+                                    logging.info(f"[{time.time():.3f}] TRANSCRIPTION: {transcript_part}")
                                     
                                     # 웹 클라이언트에게도 트랜스크립션 조각 전송 (선택적)
                                     if message_for_web is None: # 오디오 데이터가 없는 경우 (예: 텍스트 응답만)
                                          message_for_web = {"type": "status", "message": f"[T]: {transcript_part}"}
                                     else: # 오디오 데이터가 이미 있다면, 트랜스크립션은 별도 메시지로.
-                                        await gemini_to_web_queue.put(json.dumps({"type": "status", "message": f"[T]: {transcript_part}"}))
+                                        transcription_message = {"type": "status", "message": f"[T]: {transcript_part}"}
+
+                                    # OLED 표시는 비동기로 처리하여 오디오 전송 지연 방지
+                                    asyncio.create_task(asyncio.to_thread(display_text_on_oled_impl, accumulated_transcription_for_oled, 4, 14))
 
 
                                 # 텍스트 응답 (예: responseModalities가 TEXT일 때 또는 오류 메시지)
@@ -718,6 +717,10 @@ async def gemini_processor():
 
                             if message_for_web:
                                 await gemini_to_web_queue.put(json.dumps(message_for_web))
+                            
+                            # 트랜스크립션 메시지가 있다면 별도로 전송
+                            if transcription_message:
+                                await gemini_to_web_queue.put(json.dumps(transcription_message))
 
                         except websockets.exceptions.ConnectionClosed:
                             logging.warning("Connection to Gemini closed (receive_from_gemini).")
