@@ -103,17 +103,17 @@ This document outlines the tasks required to build the Raspberry Pi based Real-t
 
 ### 4.1 RPi: Camera Setup and Frame Capture (`main.py`)
 
-    - [ ] Initialize and configure the PiCamera2 using the `picamera2` library (similar to `video-record.py`).
-    - [ ] Create a video configuration (e.g., resolution, format).
-    - [ ] Implement a loop to continuously capture video frames (e.g., to a BytesIO stream or directly as JPEG).
+    - [X] Initialize and configure the PiCamera2 using the `picamera2` library (similar to `video-record.py`).
+    - [X] Create a video configuration (e.g., resolution, format).
+    - [X] Implement a loop to continuously capture video frames (e.g., to a BytesIO stream or directly as JPEG).
     - *Reference: `raspberry-pi-project/video-record.py`, `picamera2` documentation.*
 
 ### 4.2 RPi: Video Frame Streaming to Gemini (`main.py`)
 
-    - [ ] Convert captured frames to JPEG format.
-    - [ ] Base64 encode the JPEG video frames.
-    - [ ] Send video frames as part of `BidiGenerateContentRealtimeInput` message, specifically the `video` field (e.g., `{"video": {"data": "base64string", "mimeType": "image/jpeg"}}`).
-    - [ ] Manage frame rate to balance performance and Gemini API recommendations/limits.
+    - [X] Convert captured frames to JPEG format.
+    - [X] Base64 encode the JPEG video frames.
+    - [X] Send video frames as part of `BidiGenerateContentRealtimeInput` message, specifically the `video` field (e.g., `{"video": {"data": "base64string", "mimeType": "image/jpeg"}}`).
+    - [X] Manage frame rate to balance performance and Gemini API recommendations/limits.
     - *Reference: `docs/google-websocket-api.md` (BidiGenerateContentRealtimeInput, Blob structure). For concept of sending image data, refer to `gemini-web-dev/src/components/control-tray/ControlTray.tsx` where it prepares canvas image for sending.*
 
 ## Phase 5: Hardware Control via Function Calling (`main.py`)
