@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>WebSocket Test Client</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 20px;
+      }
+      #messages {
+        margin-top: 20px;
+        border: 1px solid #ccc;
+        padding: 10px;
+        height: 200px;
+        overflow-y: scroll;
+      }
+      .message {
+        margin-bottom: 5px;
+      }
+      .sent {
+        color: blue;
+      }
+      .received {
+        color: green;
+      }
+      .system {
+        color: orange;
+      }
+      .error {
+        color: red;
+      }
+      button {
+        margin: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WebSocket Test Client</h1>
+    <div>
+      <label for="wsUrl">WebSocket URL:</label>
+      <input
+        type="text"
+        id="wsUrl"
+        value="ws://RASPBERRY_PI_IP_ADDRESS:8765"
+        size="50"
+      />
+      <button onclick="connect()">Connect</button>
+      <button onclick="disconnectWs()" disabled id="disconnectButton">
+        Disconnect
+      </button>
+    </div>
+    <div style="margin-top: 10px">
+      <input
+        type="text"
+        id="messageInput"
+        placeholder="Enter text message"
+        size="40"
+        disabled
+      />
+      <button onclick="sendTextMessage()" disabled id="sendTextButton">
+        Send Text
+      </button>
+    </div>
+    <div style="margin-top: 10px">
+      <button onclick="startRecording()" disabled id="startRecordButton">
+        Start Recording
+      </button>
+      <button onclick="stopRecording()" disabled id="stopRecordButton">
+        Stop Recording
+      </button>
+    </div>
+    <div id="messages"></div>
+
+    <script>
+      let websocket;
+      const wsUrlInput = document.getElementById('wsUrl');
+      const messageInput = document.getElementById('messageInput');
+      const messagesDiv = document.getElementById('messages');
+      const connectButton = document.querySelector(
+        'button[onclick="connect()"]'
+      );
+      const disconnectButton = document.getElementById('disconnectButton');
+      const sendTextButton = document.getElementById('sendTextButton');
+      const startRecordButton = document.getElementById('startRecordButton');
+      const stopRecordButton = document.getElementById('stopRecordButton');
+
+      let audioContext;
+      let scriptProcessor;
+      let mediaStreamSource;
+      let isRecording = false;
+      const TARGET_SAMPLE_RATE = 16000; // Gemini가 선호하는 샘플링 속도
+
+      function logMessage(message, type) {
+        const p = document.createElement('p');
+        p.textContent = message;
+        p.className = 'message ' + type;
+        messagesDiv.appendChild(p);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      }
+
+      function connect() {
+        const wsUrl = wsUrlInput.value;
+        if (!wsUrl) {
+          alert('Please enter WebSocket URL');
+          return;
+        }
+        logMessage(`Attempting to connect to ${wsUrl}...`, 'system');
+        websocket = new WebSocket(wsUrl);
+
+        websocket.onopen = function (event) {
+          logMessage('Connected to WebSocket server.', 'system');
+          connectButton.disabled = true;
+          disconnectButton.disabled = false;
+          messageInput.disabled = false;
+          sendTextButton.disabled = false;
+          startRecordButton.disabled = false;
+        };
+
+        websocket.onmessage = function (event) {
+          logMessage(`Received: ${event.data}`, 'received');
+        };
+
+        websocket.onclose = function (event) {
+          logMessage('Disconnected from WebSocket server.', 'system');
+          if (event.wasClean) {
+            logMessage(
+              `Closed cleanly, code=${event.code} reason=${event.reason}`,
+              'system'
+            );
+          } else {
+            logMessage('Connection died', 'error');
+          }
+          connectButton.disabled = false;
+          disconnectButton.disabled = true;
+          messageInput.disabled = true;
+          sendTextButton.disabled = true;
+          stopRecording(); // 연결 끊기면 녹음 중지
+          startRecordButton.disabled = true;
+          stopRecordButton.disabled = true;
+        };
+
+        websocket.onerror = function (error) {
+          logMessage(
+            `WebSocket Error: ${error.message || 'Unknown error'}`,
+            'error'
+          );
+        };
+      }
+
+      function disconnectWs() {
+        if (websocket) {
+          websocket.close();
+        }
+        stopRecording(); // 수동 연결 끊기 시에도 녹음 중지
+      }
+
+      function sendTextMessage() {
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+          const message = messageInput.value;
+          if (message) {
+            websocket.send(message);
+            logMessage(`Sent Text: ${message}`, 'sent');
+            messageInput.value = '';
+          }
+        } else {
+          logMessage('WebSocket is not connected.', 'error');
+        }
+      }
+      messageInput.addEventListener('keypress', function (event) {
+        if (event.key === 'Enter') {
+          sendTextMessage();
+        }
+      });
+
+      async function startRecording() {
+        if (isRecording) return;
+        if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+          logMessage(
+            'WebSocket not connected. Cannot start recording.',
+            'error'
+          );
+          return;
+        }
+
+        logMessage('Starting audio recording...', 'system');
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          audioContext = new (window.AudioContext || window.webkitAudioContext)(
+            {
+              sampleRate: TARGET_SAMPLE_RATE, // 여기서 샘플링 속도 지정 시도
+            }
+          );
+
+          mediaStreamSource = audioContext.createMediaStreamSource(stream);
+
+          // 버퍼 크기: 4096 샘플. 16000Hz에서 약 0.25초마다 데이터 전송
+          // 실제 브라우저가 지원하는 AudioContext의 sampleRate에 따라 scriptProcessor가 동작하므로,
+          // TARGET_SAMPLE_RATE로 정확히 맞추기 어려울 수 있음. 서버측에서 resampling 필요할 수 있음.
+          const bufferSize = 4096;
+          scriptProcessor = audioContext.createScriptProcessor(
+            bufferSize,
+            1,
+            1
+          ); // 1 input channel, 1 output channel
+
+          scriptProcessor.onaudioprocess = function (audioProcessingEvent) {
+            if (
+              !isRecording ||
+              !websocket ||
+              websocket.readyState !== WebSocket.OPEN
+            ) {
+              return;
+            }
+            const inputBuffer = audioProcessingEvent.inputBuffer;
+            const pcmData = inputBuffer.getChannelData(0); // Float32Array
+
+            // Float32Array를 ArrayBuffer로 직접 전송 (또는 Int16으로 변환 후 전송)
+            // 지금은 Float32Array의 ArrayBuffer를 그대로 전송. 서버에서 Base64 인코딩.
+            websocket.send(pcmData.buffer);
+          };
+
+          mediaStreamSource.connect(scriptProcessor);
+          scriptProcessor.connect(audioContext.destination); // 스피커로 출력되지 않도록 dummy connect 또는 connect하지 않아도 됨.
+          // 하지만 일부 브라우저는 connect 해야 onaudioprocess가 호출됨.
+          isRecording = true;
+          startRecordButton.disabled = true;
+          stopRecordButton.disabled = false;
+          logMessage('Recording started. Sending audio chunks.', 'system');
+        } catch (err) {
+          logMessage(
+            `Error starting recording: ${err.name} - ${err.message}`,
+            'error'
+          );
+          console.error('Error starting recording:', err);
+          isRecording = false;
+        }
+      }
+
+      function stopRecording() {
+        if (!isRecording && !audioContext) return; // 이미 중지되었거나 시작되지 않음
+
+        logMessage('Stopping audio recording...', 'system');
+        isRecording = false;
+        if (mediaStreamSource) {
+          mediaStreamSource.disconnect();
+          mediaStreamSource.mediaStream
+            .getTracks()
+            .forEach((track) => track.stop()); // 중요: 스트림 트랙 중지
+        }
+        if (scriptProcessor) {
+          scriptProcessor.disconnect();
+        }
+        if (audioContext) {
+          audioContext
+            .close()
+            .catch((e) => console.error('Error closing AudioContext:', e)); // AudioContext 닫기
+          audioContext = null;
+        }
+        scriptProcessor = null;
+        mediaStreamSource = null;
+
+        startRecordButton.disabled =
+          websocket && websocket.readyState === WebSocket.OPEN ? false : true;
+        stopRecordButton.disabled = true;
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+          // RPi 서버에 오디오 스트림 종료 신호 전송 (선택적)
+          // websocket.send(JSON.stringify({type: "audio_stream_end"}));
+          logMessage('Recording stopped.', 'system');
+        }
+      }
+    </script>
+  </body>
+</html>
